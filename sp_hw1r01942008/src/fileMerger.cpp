@@ -241,21 +241,36 @@ findLeftUp(Point &nextPoint, vector<Point> &LCSstack, unsigned int &startPos)
 bool 
 comparePos(FILE* file1, FILE* file2, unsigned int off1, unsigned int off2, unsigned int len) 
 {
-	char buf1[len];
-	char buf2[len];
+	char buf1[BUFSIZ];
+	char buf2[BUFSIZ];
+	bool equal = true;
+	unsigned int readsize = 0;
 	fseek(file1, off1, SEEK_SET);
 	fseek(file2, off2, SEEK_SET);
-	fgets(buf1, len, file1);
-	fgets(buf2, len, file2);
-	return !strncmp(buf1, buf2, len);
+	while (len > 0) {
+		readsize = (len > BUFSIZ)? BUFSIZ : len;
+		fgets(buf1, readsize, file1);
+		fgets(buf2, readsize, file2);
+		if (strncmp(buf1, buf2, readsize) != 0) {
+			equal &= false;
+			return false;
+		}
+		len -= readsize;
+	}
+	return equal;
 }
 
 void 
 copyPos(FILE* file1, FILE* file2, unsigned int off, unsigned int len) 
 {
-	char buf[len];
+	char buf[BUFSIZ];
+	unsigned int readsize = 0;
 	fseek(file1, off, SEEK_SET);
-	fgets(buf, len, file1);
-	fprintf(file2, "%s", buf);
+	while (len > 0) {
+		readsize = (len > BUFSIZ)? BUFSIZ : len;
+		fgets(buf, readsize, file1);
+		fprintf(file2, "%s", buf);
+		len -= readsize;
+	}
 	fflush(file2);
 }
