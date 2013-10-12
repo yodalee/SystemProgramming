@@ -9,6 +9,7 @@ diff2(char* fname1, char* fname2, char* outname)
 	FILE *file2;
 	FILE *outfile;
 	LCSitem *table;
+	vector<Point> LCSstack;
 	vector<unsigned int> linCount1;
 	vector<unsigned int> linCount2;
 
@@ -20,15 +21,17 @@ diff2(char* fname1, char* fname2, char* outname)
 	//count line, declare LCS resource
 	countLine(file1, linCount1);
 	countLine(file2, linCount2);
-
-	//find longest string lenght, as bufsiz
 	table = new LCSitem[linCount1.size()*linCount2.size()];
+	LCSstack.reserve(linCount1.size()+linCount2.size());
 	
 	//build LCS table
 	buildLCS(table, file1, file2, linCount1, linCount2);
+	
+	//backtrace LCS table
+	buildStack(table, LCSstack, linCount1.size(), linCount2.size());
 
 	//write LCS table
-	writeLCS(file1, file2, outfile, table, linCount1, linCount2); 
+	writeLCS(file1, file2, outfile, LCSstack, linCount1, linCount2); 
 
 	//close file descriptor
 	closefile(file1);
@@ -46,6 +49,8 @@ diff3(char* fname_orig,char* fname_v1, \
 	FILE *outfile;
 	LCSitem *table_1v2;
 	LCSitem *table_1v3;
+	vector<Point> LCSstack1;
+	vector<Point> LCSstack2;
 	vector<unsigned int> linCount_orig;
 	vector<unsigned int> linCount_v1;
 	vector<unsigned int> linCount_v2;
@@ -62,6 +67,12 @@ diff3(char* fname_orig,char* fname_v1, \
 	countLine(file_v2, linCount_v2);
 	table_1v2 = new LCSitem[linCount_orig.size()*linCount_v1.size()];
 	table_1v3 = new LCSitem[linCount_orig.size()*linCount_v2.size()];
+	LCSstack1.reserve(linCount_orig.size()+linCount_v1.size());
+	LCSstack2.reserve(linCount_orig.size()+linCount_v2.size());
+
+	//backtrace LCS table
+	buildStack(table_1v2, LCSstack1, linCount_orig.size(), linCount_v1.size());
+	buildStack(table_1v3, LCSstack2, linCount_orig.size(), linCount_v2.size());
 
 	//build LCS table
 	buildLCS(table_1v2, file_orig, file_v1, linCount_orig, linCount_v1);
@@ -73,73 +84,6 @@ diff3(char* fname_orig,char* fname_v1, \
 	closefile(file_v1);
 	closefile(file_v2);
 	closefile(outfile);
-}
-
-void 
-writeLCS(FILE* file1, FILE* file2, FILE* outfile, LCSitem* table, vector<unsigned int> linCount1, vector<unsigned int>linCount2) 
-{
-	//initial variable
-	unsigned int colMax = linCount1.size();
-	unsigned int row = 0;
-	unsigned int col = 0;
-	vector<Point> LCSstack;
-	Point curPoint;
-	LCSdirection curdir = upLeft;
-	unsigned int rowStart = 0;
-	unsigned int colStart = 0;
-
-	//walk through LCS table
-	buildStack(table, LCSstack, linCount1.size(), linCount2.size());
-
-	//start writing 
-	while (!LCSstack.empty()) {
-		curPoint = LCSstack.back();
-		row = curPoint.row;
-		col = curPoint.col;
-		printf("row: %u, col: %u\n", row, col);
-		if (curdir != table[row*colMax+col].LCSdir) {
-			if (curdir == up) {
-				//write add to outfile from file2
-				fprintf(outfile, "%ua%u,%u\n", col, rowStart, row);
-				writePos(file2, outfile, linCount2[rowStart-1], linCount2[row] - linCount2[rowStart-1]);
-			} else if (curdir == left) {
-				//write delete to outfile from file1
-				fprintf(outfile, "%u,%ud%u\n", colStart, col, row);
-				writePos(file1, outfile, linCount1[colStart-1], linCount1[col] - linCount1[colStart-1]);
-			}
-			curdir = table[row*colMax+col].LCSdir;
-			if (curdir == up) {
-				rowStart = row;
-			} else if(curdir == left){
-				colStart = col;
-			}
-		}
-		LCSstack.pop_back();
-	}
-	if (curdir == up) {
-		//write add to outfile from file2
-		fprintf(outfile, "%ua%u,%u\n", col, rowStart, row);
-		writePos(file2, outfile, linCount2[rowStart-1], linCount2[row] - linCount2[rowStart-1]);
-	} else if (curdir == left) {
-		//write delete to outfile from file1
-		fprintf(outfile, "%u,%ud%u\n", colStart, col, row);
-		writePos(file1, outfile, linCount1[colStart-1], linCount1[col] - linCount1[colStart-1]);
-	}
-}
-
-void 
-countLine(FILE* fd, vector<unsigned int> &lineOffset) 
-{
-	unsigned int offset = 0;
-	char ch;
-	fseek(fd, 0L, SEEK_SET);
-	lineOffset.clear();
-	lineOffset.push_back(0);
-	while (EOF != (ch=fgetc(fd))){
-		offset++;
-		if (ch=='\n'){ lineOffset.push_back(offset); }
-	}
-	fseek(fd, 0L, SEEK_SET);
 }
 
 //--------------------------------------------
@@ -201,6 +145,30 @@ buildLCS(LCSitem* table, FILE* file1, FILE* file2, \
 }
 
 void 
+writeLCS(FILE* file1, FILE* file2, FILE* outfile, vector<Point> LCSstack, vector<unsigned int> linCount1, vector<unsigned int>linCount2) 
+{
+	//initial variable
+	Point curPoint;
+	Point nextPoint;
+	unsigned int startPos = 0;
+
+	//walk through LCS table
+	curPoint = LCSstack.back();
+	startPos = LCSstack.size()-1;
+	while (findLeftUp(nextPoint, LCSstack, startPos)) {
+		if ((nextPoint.row - curPoint.row) > 1 and (nextPoint.col - curPoint.col) > 1) {
+			fprintf(outfile, "%u,%uc%u,%u\n", curPoint.col+1, nextPoint.col-1, curPoint.row+1, nextPoint.row-1);
+		} else {
+			if (nextPoint.row - curPoint.row > 1)
+				fprintf(outfile, "%ua%u,%u\n", curPoint.col, curPoint.row+1, nextPoint.row-1);
+			if (nextPoint.col - curPoint.col > 1)
+				fprintf(outfile, "%u,%ud%u\n", curPoint.col+1, nextPoint.col-1, curPoint.row);
+		}
+		curPoint = nextPoint;
+	}
+}
+
+void 
 buildStack(LCSitem* table, vector<Point> &LCSstack, unsigned int colMax, unsigned int rowMax) 
 {
 	unsigned int row = rowMax-1;
@@ -209,8 +177,9 @@ buildStack(LCSitem* table, vector<Point> &LCSstack, unsigned int colMax, unsigne
 	while (!(row==0 and col==0 )) {
 		point.row = row;
 		point.col = col;
+		point.LCSdir = table[row*colMax+col].LCSdir;
 		LCSstack.push_back(point);
-		switch(table[row*colMax+col].LCSdir){
+		switch(point.LCSdir){
 		  case up:
 			  --row;
 		      break;
@@ -222,6 +191,50 @@ buildStack(LCSitem* table, vector<Point> &LCSstack, unsigned int colMax, unsigne
 			  --col;
 			  break;
 		}
+	}
+	point.row = row;
+	point.col = col;
+	point.LCSdir = upLeft;
+	LCSstack.push_back(point);
+}
+
+void 
+countLine(FILE* fd, vector<unsigned int> &lineOffset) 
+{
+	unsigned int offset = 0;
+	char ch;
+	fseek(fd, 0L, SEEK_SET);
+	lineOffset.clear();
+	lineOffset.push_back(0);
+	while (EOF != (ch=fgetc(fd))){
+		offset++;
+		if (ch=='\n'){ lineOffset.push_back(offset); }
+	}
+	fseek(fd, 0L, SEEK_SET);
+}
+
+bool 
+findLeftUp(Point &nextPoint, vector<Point> &LCSstack, unsigned int &startPos) 
+{
+	vector<Point>::const_iterator idx = LCSstack.begin() + startPos;
+	if (idx == LCSstack.begin()) {
+		return false;
+	} else {
+		while (idx != LCSstack.begin()) {
+			--idx;
+			if (idx->LCSdir == upLeft) {
+				startPos = idx - LCSstack.begin();
+				nextPoint.row = idx->row;
+				nextPoint.col = idx->col;
+				nextPoint.LCSdir = idx->LCSdir;
+				return true;
+			}
+		}
+		startPos = 0;
+		nextPoint.row = idx->row+1;
+		nextPoint.col = idx->col+1;
+		nextPoint.LCSdir = upLeft;
+		return true;
 	}
 }
 
@@ -238,7 +251,7 @@ comparePos(FILE* file1, FILE* file2, unsigned int off1, unsigned int off2, unsig
 }
 
 void 
-writePos(FILE* file1, FILE* file2, unsigned int off, unsigned int len) 
+copyPos(FILE* file1, FILE* file2, unsigned int off, unsigned int len) 
 {
 	char buf[len];
 	fseek(file1, off, SEEK_SET);
