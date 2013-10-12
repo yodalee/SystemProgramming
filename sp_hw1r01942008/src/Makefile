@@ -63,7 +63,7 @@ INCLUDE  = -I../include
 #==================================================
 # Source, library, bin Define
 #==================================================
-TARGET = fileMerger
+TARGET = file_merger
 BIN_DIR     = ../bin
 LIBRARY_DIR = ../library
 SOURCE_FILE = fileMerger.cpp fileMergerMain.cpp common.cpp
