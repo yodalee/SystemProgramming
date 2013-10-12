@@ -32,57 +32,10 @@ diff2(char* fname1, char* fname2, char* outname)
 
 	//write LCS table
 	writeLCS(file1, file2, outfile, LCSstack, linCount1, linCount2); 
-
+	
 	//close file descriptor
 	closefile(file1);
 	closefile(file2);
-	closefile(outfile);
-}
-
-void
-diff3(char* fname_orig,char* fname_v1, \
-		char* fname_v2,char* outname){
-	//declare resource
-	FILE *file_orig;
-	FILE *file_v1;
-	FILE *file_v2;
-	FILE *outfile;
-	LCSitem *table_1v2;
-	LCSitem *table_1v3;
-	vector<Point> LCSstack1;
-	vector<Point> LCSstack2;
-	vector<unsigned int> linCount_orig;
-	vector<unsigned int> linCount_v1;
-	vector<unsigned int> linCount_v2;
-
-	//initial file descriptor
-	openfile(file_orig, fname_orig, "r");
-	openfile(file_v1, fname_v1, "r");
-	openfile(file_v2, fname_v2, "r");
-	openfile(outfile, outname, "w");
-
-	//count line, declare LCS resource
-	countLine(file_orig, linCount_orig);
-	countLine(file_v1, linCount_v1);
-	countLine(file_v2, linCount_v2);
-	table_1v2 = new LCSitem[linCount_orig.size()*linCount_v1.size()];
-	table_1v3 = new LCSitem[linCount_orig.size()*linCount_v2.size()];
-	LCSstack1.reserve(linCount_orig.size()+linCount_v1.size());
-	LCSstack2.reserve(linCount_orig.size()+linCount_v2.size());
-
-	//backtrace LCS table
-	buildStack(table_1v2, LCSstack1, linCount_orig.size(), linCount_v1.size());
-	buildStack(table_1v3, LCSstack2, linCount_orig.size(), linCount_v2.size());
-
-	//build LCS table
-	buildLCS(table_1v2, file_orig, file_v1, linCount_orig, linCount_v1);
-	buildLCS(table_1v3, file_orig, file_v2, linCount_orig, linCount_v2);
-
-	//write LCS table
-	//close file descriptor
-	closefile(file_orig);
-	closefile(file_v1);
-	closefile(file_v2);
 	closefile(outfile);
 }
 
@@ -144,8 +97,7 @@ buildLCS(LCSitem* table, FILE* file1, FILE* file2, \
 	}
 }
 
-void 
-writeLCS(FILE* file1, FILE* file2, FILE* outfile, vector<Point> LCSstack, vector<unsigned int> linCount1, vector<unsigned int>linCount2) 
+void writeLCS(FILE* file1, FILE* file2, FILE* outfile, vector<Point> LCSstack, vector<unsigned int> linCount1, vector<unsigned int>linCount2) 
 {
 	//initial variable
 	Point curPoint;
@@ -223,6 +175,9 @@ findLeftUp(Point &nextPoint, vector<Point> &LCSstack, unsigned int &startPos)
 		while (idx != LCSstack.begin()) {
 			--idx;
 			if (idx->LCSdir == upLeft) {
+				if (startPos - (idx - LCSstack.begin()) < 3) {
+					continue;
+				}
 				startPos = idx - LCSstack.begin();
 				nextPoint.row = idx->row;
 				nextPoint.col = idx->col;
@@ -252,7 +207,6 @@ comparePos(FILE* file1, FILE* file2, unsigned int off1, unsigned int off2, unsig
 		fgets(buf1, readsize, file1);
 		fgets(buf2, readsize, file2);
 		if (strncmp(buf1, buf2, readsize) != 0) {
-			equal &= false;
 			return false;
 		}
 		len -= readsize;

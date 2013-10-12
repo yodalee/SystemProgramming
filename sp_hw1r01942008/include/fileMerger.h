@@ -31,27 +31,16 @@ typedef struct {
 void diff2(char* ,char* ,char*);
 
 //--------------------------------------------
-// Function: diff3(char*, char*, char*, char*);
-// Description: compare v1, v2 with origin and write conflict to fourth file
-//--------------------------------------------
-void diff3(char* ,char* ,char* ,char*);
-
-//--------------------------------------------
 // Function: buildLCS(LCSitem*, FILE*, FILE*, vector<unsigned int>, vector<unsigned int>)
 // Description: build LCS table, LCSitem* should be initialize first(?)
 //--------------------------------------------
 void buildLCS(LCSitem*, FILE*, FILE*, const vector<unsigned int>,const vector<unsigned int>);
 
 //--------------------------------------------
-// Function: writeLCS(FILE*, FILE*, FILE*, LCSitem*, vector<unsigned int>, vector<unsigned int>)
+// Function: writeLCS(FILE*, FILE*, FILE*, vector<unsigned int>, vector<unsigned int>)
 // Description: write diff files into file descriptor
 //--------------------------------------------
 void writeLCS(FILE*, FILE*, FILE*, const vector<Point>, const vector<unsigned int>, const vector<unsigned int>);
-
-//--------------------------------------------
-// Function: writeLCS2(FILE*, FILE*, FILE*, LCSitem*, LCSitem*, vector<unsigned int>, vector<unsigned int>, vector<unsigned int>)
-// Description: write merge diff file into file descriptor
-//--------------------------------------------
 
 //--------------------------------------------
 // Function: buildStack(LCSitem*, vector<Point>&, unsigned int, unsigned int
