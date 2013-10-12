@@ -43,7 +43,7 @@ DEL_FILE      = rm -f
 DEL_DIR       = rm -rf
 MKDIR         = mkdir -p
 MOVE          = mv -u
-ARG           = ../test/ex1_1 ../test/ex1_2 ../test/ex1_3 ../test/ex1_out
+ARG           = ../test/ex1_1 ../test/ex1_2 ../test/ex1_3 ../test/ex1_4
 STDIN         = 
 SHELL         = /bin/sh
 
