@@ -70,13 +70,13 @@ diff3(char* fname_orig,char* fname_v1, \
 	LCSstack1.reserve(linCount_orig.size()+linCount_v1.size());
 	LCSstack2.reserve(linCount_orig.size()+linCount_v2.size());
 
-	//backtrace LCS table
-	buildStack(table_1v2, LCSstack1, linCount_orig.size(), linCount_v1.size());
-	buildStack(table_1v3, LCSstack2, linCount_orig.size(), linCount_v2.size());
-
 	//build LCS table
 	buildLCS(table_1v2, file_orig, file_v1, linCount_orig, linCount_v1);
 	buildLCS(table_1v3, file_orig, file_v2, linCount_orig, linCount_v2);
+
+	//backtrace LCS table
+	buildStack(table_1v2, LCSstack1, linCount_orig.size(), linCount_v1.size());
+	buildStack(table_1v3, LCSstack2, linCount_orig.size(), linCount_v2.size());
 
 	//write LCS table
 	//close file descriptor
@@ -252,7 +252,6 @@ comparePos(FILE* file1, FILE* file2, unsigned int off1, unsigned int off2, unsig
 		fgets(buf1, readsize, file1);
 		fgets(buf2, readsize, file2);
 		if (strncmp(buf1, buf2, readsize) != 0) {
-			equal &= false;
 			return false;
 		}
 		len -= readsize;
