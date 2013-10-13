@@ -23,12 +23,13 @@ typedef struct {
 	unsigned int col;
 	LCSdirection LCSdir;
 } Point;
+const unsigned int mergeMargin = 3;
 
 //--------------------------------------------
-// Function: diff2(char*, char*, char*);
+// Function: diff(char*, char*, char*);
 // Description: compare two file and write diff to third file
 //--------------------------------------------
-void diff2(char* ,char* ,char*);
+void diff(char* ,char* ,char*);
 
 //--------------------------------------------
 // Function: buildLCS(LCSitem*, FILE*, FILE*, vector<unsigned int>, vector<unsigned int>)
@@ -60,6 +61,12 @@ void countLine(FILE* fd, vector<unsigned int> &);
 // Description: walk through LCS stack, and find leftUp direction, and return Point by reference
 //--------------------------------------------
 bool findLeftUp(Point&, vector<Point>&, unsigned int&);
+
+//--------------------------------------------
+// Function: checkMargin
+// Description: check merge margin(3)
+//--------------------------------------------
+bool checkMargin(Point&, vector<Point>&, unsigned int&);
 
 //--------------------------------------------
 // Function: comparePos(FILE*, FILE*, unsigned int, unsigned int, unsigned int)

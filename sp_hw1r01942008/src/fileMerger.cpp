@@ -2,7 +2,7 @@
 #include "common.h"
 
 void 
-diff2(char* fname1, char* fname2, char* outname) 
+diff(char* fname1, char* fname2, char* outname) 
 {
 	//declare resource
 	FILE *file1;
@@ -108,6 +108,12 @@ void writeLCS(FILE* file1, FILE* file2, FILE* outfile, vector<Point> LCSstack, v
 	curPoint = LCSstack.back();
 	startPos = LCSstack.size()-1;
 	while (findLeftUp(nextPoint, LCSstack, startPos)) {
+		//conflict occur, require check margin
+		if ((nextPoint.row - curPoint.row) > 1 or (nextPoint.col - curPoint.col) > 1) {
+			if(checkMargin(nextPoint, LCSstack, startPos)){
+				continue;
+			}
+		}
 		if ((nextPoint.row - curPoint.row) > 1 and (nextPoint.col - curPoint.col) > 1) {
 			fprintf(outfile, "%u,%uc%u,%u\n", curPoint.col+1, nextPoint.col-1, curPoint.row+1, nextPoint.row-1);
 		} else {
@@ -175,9 +181,6 @@ findLeftUp(Point &nextPoint, vector<Point> &LCSstack, unsigned int &startPos)
 		while (idx != LCSstack.begin()) {
 			--idx;
 			if (idx->LCSdir == upLeft) {
-				if (startPos - (idx - LCSstack.begin()) < 3) {
-					continue;
-				}
 				startPos = idx - LCSstack.begin();
 				nextPoint.row = idx->row;
 				nextPoint.col = idx->col;
@@ -190,6 +193,37 @@ findLeftUp(Point &nextPoint, vector<Point> &LCSstack, unsigned int &startPos)
 		nextPoint.col = idx->col+1;
 		nextPoint.LCSdir = upLeft;
 		return true;
+	}
+}
+
+bool 
+checkMargin(Point &nextPoint, vector<Point>&LCSstack, unsigned int& startPos) 
+{
+	vector<Point>::const_iterator idx;
+	if (startPos < mergeMargin) {
+		//left item less than mergeMargin
+		//find first last leftUp
+		//set startPos = 0 to end findLeftUp nexttime
+		for (idx = LCSstack.begin(); idx < LCSstack.begin() + startPos; ++idx) {
+			if (idx->LCSdir != upLeft) {
+				nextPoint.row = idx->row+1;
+				nextPoint.col = idx->col+1;
+			}
+		}
+		startPos = 0;
+		return false;
+	} else {
+		//left item larger than mergeMargin
+		//check mergeMargin item are not all upLeft
+		for (int i = mergeMargin-1; i > 0; --i) {
+			idx = LCSstack.begin() + startPos - i;
+			if (idx->LCSdir != upLeft) {
+				startPos = startPos - i;
+				nextPoint = *idx;
+				return true;
+			}
+		}
+		return false;
 	}
 }
 
