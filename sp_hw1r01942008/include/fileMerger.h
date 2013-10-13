@@ -41,7 +41,7 @@ void buildLCS(LCSitem*, FILE*, FILE*, const vector<unsigned int>,const vector<un
 // Function: writeLCS(FILE*, FILE*, FILE*, vector<unsigned int>, vector<unsigned int>)
 // Description: write diff files into file descriptor
 //--------------------------------------------
-void writeLCS(FILE*, FILE*, FILE*, const vector<Point>, const vector<unsigned int>, const vector<unsigned int>);
+void writeLCS(FILE*, FILE*, FILE*, const vector<Point>, const vector<unsigned int>, const vector<unsigned int>, char*, char*);
 
 //--------------------------------------------
 // Function: buildStack(LCSitem*, vector<Point>&, unsigned int, unsigned int

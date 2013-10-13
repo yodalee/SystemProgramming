@@ -31,7 +31,7 @@ diff(char* fname1, char* fname2, char* outname)
 	buildStack(table, LCSstack, linCount1.size(), linCount2.size());
 
 	//write LCS table
-	writeLCS(file1, file2, outfile, LCSstack, linCount1, linCount2); 
+	writeLCS(file1, file2, outfile, LCSstack, linCount1, linCount2, fname1, fname2); 
 
 	//close file descriptor
 	closefile(file1);
@@ -97,7 +97,7 @@ buildLCS(LCSitem* table, FILE* file1, FILE* file2, \
 	}
 }
 
-void writeLCS(FILE* file1, FILE* file2, FILE* outfile, vector<Point> LCSstack, vector<unsigned int> linCount1, vector<unsigned int>linCount2) 
+void writeLCS(FILE* file1, FILE* file2, FILE* outfile, vector<Point> LCSstack, vector<unsigned int> linCount1, vector<unsigned int>linCount2, char* fname1, char* fname2) 
 {
 	//initial variable
 	Point curPoint;
@@ -115,12 +115,28 @@ void writeLCS(FILE* file1, FILE* file2, FILE* outfile, vector<Point> LCSstack, v
 			}
 		}
 		if ((nextPoint.row - curPoint.row) > 1 and (nextPoint.col - curPoint.col) > 1) {
-			fprintf(outfile, "%u,%uc%u,%u\n", curPoint.col+1, nextPoint.col-1, curPoint.row+1, nextPoint.row-1);
+			//fprintf(outfile, "%u,%uc%u,%u\n", curPoint.col+1, nextPoint.col-1, curPoint.row+1, nextPoint.row-1);
+			fprintf(outfile, ">>>>>>>>>> %s\n", fname1);
+			copyPos(file1, outfile, linCount1[curPoint.col], linCount1[nextPoint.col-1] - linCount1[curPoint.col]); 
+			fprintf(outfile, "========== %s\n", fname2);
+			copyPos(file2, outfile, linCount2[curPoint.row], linCount2[nextPoint.row-1] - linCount2[curPoint.row]);
+			fprintf(outfile, "<<<<<<<<<<\n");
+			copyPos(file1, outfile, linCount1[nextPoint.col-1], linCount1[nextPoint.col] - linCount1[nextPoint.col-1]);
+		} else if (nextPoint.row - curPoint.row > 1) {
+			fprintf(outfile, ">>>>>>>>>> %s\n", fname1);
+			fprintf(outfile, "========== %s\n", fname2);
+			copyPos(file2, outfile, linCount2[curPoint.row], linCount2[nextPoint.row-1] - linCount2[curPoint.row]);
+			fprintf(outfile, "<<<<<<<<<<\n");
+			//fprintf(outfile, "%ua%u,%u\n", curPoint.col, curPoint.row+1, nextPoint.row-1);
+		} else if (nextPoint.col - curPoint.col > 1) {
+			fprintf(outfile, ">>>>>>>>>> %s\n", fname1);
+			copyPos(file1, outfile, linCount1[curPoint.col], linCount1[nextPoint.col-1] - linCount1[curPoint.col]); 
+			fprintf(outfile, "========== %s\n", fname2);
+			fprintf(outfile, "<<<<<<<<<<\n");
+			//fprintf(outfile, "%u,%ud%u\n", curPoint.col+1, nextPoint.col-1, curPoint.row);
 		} else {
-			if (nextPoint.row - curPoint.row > 1)
-				fprintf(outfile, "%ua%u,%u\n", curPoint.col, curPoint.row+1, nextPoint.row-1);
-			if (nextPoint.col - curPoint.col > 1)
-				fprintf(outfile, "%u,%ud%u\n", curPoint.col+1, nextPoint.col-1, curPoint.row);
+			//same line, direct output
+			copyPos(file1, outfile, linCount1[nextPoint.col-1], linCount1[nextPoint.col] - linCount1[nextPoint.col-1]);
 		}
 		curPoint = nextPoint;
 	}
@@ -132,6 +148,10 @@ buildStack(LCSitem* table, vector<Point> &LCSstack, unsigned int colMax, unsigne
 	unsigned int row = rowMax-1;
 	unsigned int col = colMax-1;
 	Point point;
+	point.row = row+1;
+	point.col = col+1;
+	point.LCSdir = upLeft;
+	LCSstack.push_back(point);
 	while (!(row==0 and col==0 )) {
 		point.row = row;
 		point.col = col;
@@ -188,7 +208,6 @@ findLeftUp(Point &nextPoint, vector<Point> &LCSstack, unsigned int &startPos)
 				return true;
 			}
 		}
-		startPos = 0;
 		nextPoint.row = idx->row+1;
 		nextPoint.col = idx->col+1;
 		nextPoint.LCSdir = upLeft;
@@ -210,7 +229,6 @@ checkMargin(Point &nextPoint, vector<Point>&LCSstack, unsigned int& startPos)
 				nextPoint.col = idx->col+1;
 			}
 		}
-		startPos = 0;
 		return false;
 	} else {
 		//left item larger than mergeMargin
@@ -252,13 +270,18 @@ void
 copyPos(FILE* file1, FILE* file2, unsigned int off, unsigned int len) 
 {
 	char buf[BUFSIZ];
-	unsigned int readsize = 0;
+	size_t readsize = 0;
 	fseek(file1, off, SEEK_SET);
 	while (len > 0) {
-		readsize = (len > BUFSIZ)? BUFSIZ : len;
-		fgets(buf, readsize, file1);
-		fprintf(file2, "%s", buf);
+		readsize = (len>BUFSIZ)? BUFSIZ : len;
+		//fprintf(stderr, "check %u, %u\n", len, readsize);
+		readsize = fread(buf, 1, readsize, file1);
+		fwrite(buf, 1, readsize, file2);
+		//fprintf(stderr, "check %u, %u\n", len, readsize);
 		len -= readsize;
+		if (readsize == 0) {
+			break;
+		}
 	}
 	fflush(file2);
 }
