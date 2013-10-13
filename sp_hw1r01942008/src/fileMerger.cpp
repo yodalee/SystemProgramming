@@ -32,7 +32,7 @@ diff(char* fname1, char* fname2, char* outname)
 
 	//write LCS table
 	writeLCS(file1, file2, outfile, LCSstack, linCount1, linCount2); 
-	
+
 	//close file descriptor
 	closefile(file1);
 	closefile(file2);
