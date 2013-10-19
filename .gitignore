@@ -2,4 +2,7 @@ bin
 doc
 library
 fileMerger
+sdir
+cdir
 *.swp
+*.o
