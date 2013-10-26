@@ -8,6 +8,7 @@
 #include <string.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <errno.h>
 
 static int parse_arg(csiebox_client* client, int argc, char** argv);
 static int login(csiebox_client* client);
@@ -166,19 +167,33 @@ static int login(csiebox_client* client) {
 
 //--------------------------------------------
 // Function: treewalk
-// Description: chdir to client path, then do treewalk
+// Description: 
+// first check client directory exist, if not make it
+// then chdir to client path, do treewalk
 //--------------------------------------------
 int
 treewalk(csiebox_client* client) 
 {
-	char *fullpath = (char*)malloc(PATH_MAX);
-	strncpy(fullpath, client->arg.path, PATH_MAX);
-	fullpath[PATH_MAX-1] = '\0';
-	return(handlepath(fullpath));
+	char *filepath = (char*)malloc(PATH_MAX);
+	strncpy(filepath, client->arg.path, PATH_MAX);
+
+	//try to make client directory
+	if ( mkdir(filepath, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH) == -1){
+		if( EEXIST != errno ){
+			fprintf(stderr, "Error when creating client home directory\n");
+			exit(1);
+		}
+	} else {
+		printf("Create home directory at: %s\n", filepath);
+	}
+	chdir(filepath);
+	strncpy(filepath, ".", 2);
+	filepath[1] == '\0';
+	return(handlepath(filepath));
 }
 
 int
-handlepath(char *fullpath)
+handlepath(char *localpath)
 {
 	static int		maxLen;
 	static char		maxName[PATH_MAX+1];
@@ -189,11 +204,11 @@ handlepath(char *fullpath)
 	char			*suffix;
 	
 	// check directory open permission
-	if ((dp = opendir(fullpath)) == NULL) {
-		return handlefile(fullpath, &statbuf, TW_DNR);
+	if ((dp = opendir(localpath)) == NULL) {
+		return handlefile(localpath, &statbuf, TW_DNR);
 	}
 	//is directory walk through directory
-	suffix = fullpath + strlen(fullpath);
+	suffix = localpath + strlen(localpath);
 	*suffix++='/';
 	*suffix = '\0';
 	// walk through directory entry by readdir
@@ -202,17 +217,17 @@ handlepath(char *fullpath)
 			strcmp(direntry->d_name, "..") == 0)
 			continue;
 		strcpy(suffix, direntry->d_name);
-		lstat(fullpath, &statbuf);
+		lstat(localpath, &statbuf);
 		//call handlefile to sync
-		handlefile(fullpath, &statbuf, TW_F);
+		handlefile(localpath, &statbuf, TW_F);
 		if (S_ISDIR(statbuf.st_mode)) {
 			// get a subdirectory, call walkdir recursive
-			handlepath(fullpath);
+			handlepath(localpath);
 		}
 	}
 	suffix[-1] = '\0';
 	if (closedir(dp) < 0) 
-		fprintf(stderr, "can't close client directory %s", fullpath);
+		fprintf(stderr, "can't close client directory %s", localpath);
 }
 
 int
