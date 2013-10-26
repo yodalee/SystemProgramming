@@ -6,9 +6,23 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <dirent.h>
+#include <sys/stat.h>
 
 static int parse_arg(csiebox_client* client, int argc, char** argv);
 static int login(csiebox_client* client);
+static int sendfile(csiebox_client* client);
+static int sendmeta(csiebox_client* client);
+static int sendhlink(csiebox_client* client);
+static int rmfile(csiebox_client *client); 
+int treewalk(csiebox_client *client);
+int handlepath(char* path);
+int handlefile(const char* path, const struct stat *statptr, int type);
+enum {TW_F, TW_DNR, TW_NS};
+/* file other than directory */
+/* directory */
+/* directory that can't be read */
+/* file that we can't stat */
 
 //read config file, and connect to server
 void csiebox_client_init(
@@ -41,7 +55,10 @@ int csiebox_client_run(csiebox_client* client) {
     return 0;
   }
   fprintf(stderr, "login success\n");
-  //TODO
+  //walk through client directory, find longest path
+  treewalk(client);
+  //transfer file 
+  //transfer 
 
   return 1;
 }
@@ -145,4 +162,88 @@ static int login(csiebox_client* client) {
     }
   }
   return 0;
+}
+
+//--------------------------------------------
+// Function: treewalk
+// Description: chdir to client path, then do treewalk
+//--------------------------------------------
+int
+treewalk(csiebox_client* client) 
+{
+	char *fullpath = (char*)malloc(PATH_MAX);
+	strncpy(fullpath, client->arg.path, PATH_MAX);
+	fullpath[PATH_MAX-1] = '\0';
+	return(handlepath(fullpath));
+}
+
+int
+handlepath(char *fullpath)
+{
+	struct stat		statbuf;
+	struct dirent	*dirp;
+	DIR				*dp;
+	int				ret;
+	char			*suffix;
+
+	//fill statbuf with current path
+	if (lstat(fullpath, &statbuf) < 0)
+		return handlefile(fullpath, &statbuf, TW_NS);
+	//is file, call handlefile to handle file
+	if (S_ISDIR(statbuf.st_mode) == 0) {
+		return handlefile(fullpath, &statbuf, TW_F);
+	}
+	//is directory, call handlfile to set ret value
+	if ((ret = handlefile(fullpath, &statbuf, TW_F)) != 0) {
+		return ret;
+	}
+	//is directory walk through directory
+	suffix = fullpath + strlen(fullpath);
+	*suffix++='/';
+	*suffix = '\0';
+
+	if ((dp = opendir(fullpath)) == NULL) {
+		return handlefile(fullpath, &statbuf, TW_DNR);
+	}
+	while ((dirp = readdir(dp)) != NULL) {
+		if (strcmp(dirp->d_name, ".") == 0 || \
+			strcmp(dirp->d_name, "..") == 0)
+			continue;
+		strcpy(suffix, dirp->d_name);
+
+		if((ret = handlepath(fullpath) != 0))
+			break;
+	}
+	suffix[-1] = '\0';
+	if (closedir(dp) < 0) 
+		fprintf(stderr, "can't close client directory %s", fullpath);
+	
+	return ret;
+}
+
+int
+handlefile(const char *pathname, const struct stat *statptr,int type)
+{
+	switch(type){
+		case TW_F:
+			switch(statptr->st_mode & S_IFMT){
+				case S_IFREG: printf("regular: %s\n", pathname); break;
+				case S_IFBLK: printf("XD\n"); break;
+				case S_IFCHR: printf("XD\n"); break;
+				case S_IFIFO: printf("XD\n"); break;
+				case S_IFLNK: printf("slink: %s\n", pathname); break;
+				case S_IFDIR: printf("getdir: %s\n", pathname); break;
+			}
+			break;
+		case TW_DNR:
+			fprintf(stderr, "can't read directory %s", pathname);
+			return 1;
+		case TW_NS:
+			fprintf(stderr, "stat error for %s", pathname);
+			return 1;
+		default: 
+			fprintf(stderr, "unknown type %d for pathname %s\n", type, pathname);
+			exit(1);
+	}
+	return (0);
 }
