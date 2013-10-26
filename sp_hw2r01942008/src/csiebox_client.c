@@ -180,45 +180,39 @@ treewalk(csiebox_client* client)
 int
 handlepath(char *fullpath)
 {
+	static int		maxLen;
+	static char		maxName[PATH_MAX+1];
 	struct stat		statbuf;
-	struct dirent	*dirp;
+	struct dirent	*direntry;
 	DIR				*dp;
 	int				ret;
 	char			*suffix;
-
-	//fill statbuf with current path
-	if (lstat(fullpath, &statbuf) < 0)
-		return handlefile(fullpath, &statbuf, TW_NS);
-	//is file, call handlefile to handle file
-	if (S_ISDIR(statbuf.st_mode) == 0) {
-		return handlefile(fullpath, &statbuf, TW_F);
-	}
-	//is directory, call handlfile to set ret value
-	if ((ret = handlefile(fullpath, &statbuf, TW_F)) != 0) {
-		return ret;
+	
+	// check directory open permission
+	if ((dp = opendir(fullpath)) == NULL) {
+		return handlefile(fullpath, &statbuf, TW_DNR);
 	}
 	//is directory walk through directory
 	suffix = fullpath + strlen(fullpath);
 	*suffix++='/';
 	*suffix = '\0';
-
-	if ((dp = opendir(fullpath)) == NULL) {
-		return handlefile(fullpath, &statbuf, TW_DNR);
-	}
-	while ((dirp = readdir(dp)) != NULL) {
-		if (strcmp(dirp->d_name, ".") == 0 || \
-			strcmp(dirp->d_name, "..") == 0)
+	// walk through directory entry by readdir
+	while ((direntry = readdir(dp)) != NULL) {
+		if (strcmp(direntry->d_name, ".") == 0 || \
+			strcmp(direntry->d_name, "..") == 0)
 			continue;
-		strcpy(suffix, dirp->d_name);
-
-		if((ret = handlepath(fullpath) != 0))
-			break;
+		strcpy(suffix, direntry->d_name);
+		lstat(fullpath, &statbuf);
+		//call handlefile to sync
+		handlefile(fullpath, &statbuf, TW_F);
+		if (S_ISDIR(statbuf.st_mode)) {
+			// get a subdirectory, call walkdir recursive
+			handlepath(fullpath);
+		}
 	}
 	suffix[-1] = '\0';
 	if (closedir(dp) < 0) 
 		fprintf(stderr, "can't close client directory %s", fullpath);
-	
-	return ret;
 }
 
 int
