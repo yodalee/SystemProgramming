@@ -305,7 +305,7 @@ static char* get_user_homedir(
   return ret;
 }
 
-//handle the send meta request
+//handle the send meta request, mkdir if the meta is a directory
 //return STATUS_OK if no need to sendfile
 //return STATUS_FAIL if something wrong
 //return STATUS_MORE if need sendfile
@@ -330,18 +330,23 @@ static void checkmeta(
 	}
 	strncat(fullpath, filepath, strlen(filepath));
 
-	//checkmeta
-	uint8_t filehash[MD5_DIGEST_LENGTH];
-	md5_file(fullpath, filehash);
-	if (memcmp(meta->message.body.hash,
-		filehash, MD5_DIGEST_LENGTH) != 0) {
-		fprintf(stderr, "md5 is different\n");
-		status = CSIEBOX_PROTOCOL_STATUS_MORE;
-		//return more
-	} else {
-		fprintf(stderr, "md5 is identical\n");
+	//checkmeta, if is directory, just call mkdir. file then compare hash
+	if ((meta->message.body.stat.st_mode & S_IFMT) == S_IFDIR) {
+		mkdir(fullpath, DIR_S_FLAG);
 		status = CSIEBOX_PROTOCOL_STATUS_OK;
-		//return ok
+	} else {
+		uint8_t filehash[MD5_DIGEST_LENGTH];
+		md5_file(fullpath, filehash);
+		if (memcmp(meta->message.body.hash,
+			filehash, MD5_DIGEST_LENGTH) != 0) {
+			fprintf(stderr, "md5 is different\n");
+			status = CSIEBOX_PROTOCOL_STATUS_MORE;
+			//return more
+		} else {
+			fprintf(stderr, "md5 is identical\n");
+			status = CSIEBOX_PROTOCOL_STATUS_OK;
+			//return ok
+		}
 	}
 
 	csiebox_protocol_header header;

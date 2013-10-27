@@ -168,7 +168,7 @@ static int login(csiebox_client* client) {
   return 0;
 }
 
-//sendmeta return whether file need update
+//sendmeta return whether file need update, or send directory path to server
 static int sendmeta(csiebox_client* client, const char* syncfile, const struct stat* statptr) {
 	//prepare protocol meta content
 	csiebox_protocol_meta req;
@@ -179,7 +179,9 @@ static int sendmeta(csiebox_client* client, const char* syncfile, const struct s
 	req.message.header.req.datalen = sizeof(req) - sizeof(req.message.header);
 	req.message.body.pathlen = strlen(syncfile);
 	memcpy(&req.message.body.stat, statptr, sizeof(struct stat));
-	md5_file(syncfile, req.message.body.hash);
+	if ((statptr->st_mode & S_IFMT) != S_IFDIR) {
+		md5_file(syncfile, req.message.body.hash);
+	}
 
 	//send content
 	if (!send_message(client->conn_fd, &req, sizeof(req))) {
@@ -387,7 +389,7 @@ handlefile(csiebox_client* client, const char *pathname, const struct stat *stat
 					break;
 				case S_IFDIR:
 					printf("get a directory: %s\n", pathname);
-					//sendfile(client, pathname, statptr);
+					sendmeta(client, pathname, statptr);
 					break;
 				case S_IFBLK:
 				case S_IFCHR:
