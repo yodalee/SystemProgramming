@@ -21,6 +21,7 @@ static int sendhlink(csiebox_client* client);
 static int rmfile(csiebox_client *client); 
 int treewalk(csiebox_client *client, filearray* list);
 int handlepath(char* path, filearray* list);
+int findmax(filearray* list);
 int handlefile(csiebox_client *client, fileinfo* info);
 enum {TW_F, TW_DNR};
 /* file*/
@@ -52,19 +53,25 @@ void csiebox_client_init(
 
 //this is where client sends request, you sould write your code here
 int csiebox_client_run(csiebox_client* client) {
+	int idx = 0;
+	char longest[PATH_MAX];
+
 	if (!login(client)) {
 		fprintf(stderr, "login fail\n");
 		return 0;
 	}
 	fprintf(stderr, "login success\n");
-	//walk through client directory, find longest path
+
+	//walk through client directory, generate filelist
 	filearray list;
 	initArray(&list, 10);
 	treewalk(client, &list);
-	//transfer file 
-	int i = 0;
-	for (i = 0; i < list.used; ++i) {
-		handlefile(client, &list.array[i]);
+
+	//find maximum
+	findmax(&list);
+
+	for (idx = 0; idx < list.used; ++idx) {
+		handlefile(client, &list.array[idx]);
 	}
 	return 1;
 }
@@ -366,8 +373,6 @@ handlepath(char *localpath, filearray* list)
 		fileinfo ele;
 		strncpy(ele.path, localpath, strlen(localpath));
 		ele.path[strlen(localpath)] = '\0';
-
-		fprintf(stderr, "get file: %s\n", ele.path);
 		memcpy(&ele.statbuf, &statbuf, sizeof(struct stat));
 		insertArray(list, ele);
 		if (S_ISDIR(statbuf.st_mode)) {
@@ -404,3 +409,29 @@ handlefile(csiebox_client* client, fileinfo* info)
 	}
 	return 0;
 }
+
+int findmax( filearray* list ){
+	int idx = 0;
+	int maxlen = 0;
+	int maxidx = 0;
+	struct stat statbuf;
+	for (idx = 0; idx < list->used; ++idx) {
+		if (strlen(list->array[idx].path) > maxlen) {
+			maxlen = strlen(list->array[idx].path);
+			maxidx = idx;
+		}
+	}
+	FILE* record = fopen(default_name, "w");
+	fprintf( record, "%s\n", list->array[maxidx].path);
+	fclose(record);
+	
+	lstat(default_name, &statbuf);
+	fileinfo ele;
+	strncpy(ele.path, default_name, strlen(default_name));
+	ele.path[strlen(default_name)] = '\0';
+	memcpy(&ele.statbuf, &statbuf, sizeof(struct stat));
+
+	insertArray(list, ele);
+	return 0;
+}
+

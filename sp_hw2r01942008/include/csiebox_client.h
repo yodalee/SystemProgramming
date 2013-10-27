@@ -10,6 +10,8 @@ extern "C" {
 #include <limits.h>
 #include <malloc.h>
 
+#define default_name "./longestPath.txt"
+
 typedef struct {
 	char path[PATH_MAX];
 	struct stat statbuf;
