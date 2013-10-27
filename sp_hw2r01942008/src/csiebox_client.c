@@ -19,14 +19,12 @@ static int sendfile(csiebox_client* client, const char* syncfile, const struct s
 static int sendslink(csiebox_client* client, const char* syncfile);
 static int sendhlink(csiebox_client* client);
 static int rmfile(csiebox_client *client); 
-int treewalk(csiebox_client *client);
-int handlepath(csiebox_client *client, char* path);
-int handlefile(csiebox_client *client, const char* path, const struct stat *statptr, int type);
-enum {TW_F, TW_DNR, TW_NS};
-/* file other than directory */
-/* directory */
+int treewalk(csiebox_client *client, filearray* list);
+int handlepath(char* path, filearray* list);
+int handlefile(csiebox_client *client, fileinfo* info);
+enum {TW_F, TW_DNR};
+/* file*/
 /* directory that can't be read */
-/* file that we can't stat */
 
 //read config file, and connect to server
 void csiebox_client_init(
@@ -54,17 +52,21 @@ void csiebox_client_init(
 
 //this is where client sends request, you sould write your code here
 int csiebox_client_run(csiebox_client* client) {
-  if (!login(client)) {
-    fprintf(stderr, "login fail\n");
-    return 0;
-  }
-  fprintf(stderr, "login success\n");
-  //walk through client directory, find longest path
-  treewalk(client);
-  //transfer file 
-  //transfer 
-
-  return 1;
+	if (!login(client)) {
+		fprintf(stderr, "login fail\n");
+		return 0;
+	}
+	fprintf(stderr, "login success\n");
+	//walk through client directory, find longest path
+	filearray list;
+	initArray(&list, 10);
+	treewalk(client, &list);
+	//transfer file 
+	int i = 0;
+	for (i = 0; i < list.used; ++i) {
+		handlefile(client, &list.array[i]);
+	}
+	return 1;
 }
 
 void csiebox_client_destroy(csiebox_client** client) {
@@ -315,7 +317,7 @@ static int senddataend(csiebox_client* client) {
 // then chdir to client path, do treewalk
 //--------------------------------------------
 int
-treewalk(csiebox_client* client) 
+treewalk(csiebox_client* client, filearray* list) 
 {
 	char *filepath = (char*)malloc(PATH_MAX);
 	strncpy(filepath, client->arg.path, PATH_MAX);
@@ -332,11 +334,11 @@ treewalk(csiebox_client* client)
 	chdir(filepath);
 	strncpy(filepath, ".", 2);
 	filepath[1] == '\0';
-	return(handlepath(client, filepath));
+	return(handlepath(filepath, list));
 }
 
 int
-handlepath(csiebox_client* client, char *localpath)
+handlepath(char *localpath, filearray* list)
 {
 	static int		maxLen;
 	static char		maxName[PATH_MAX+1];
@@ -348,7 +350,7 @@ handlepath(csiebox_client* client, char *localpath)
 	
 	// check directory open permission
 	if ((dp = opendir(localpath)) == NULL) {
-		return handlefile(client, localpath, &statbuf, TW_DNR);
+		return 1;
 	}
 	//is directory walk through directory
 	suffix = localpath + strlen(localpath);
@@ -361,11 +363,16 @@ handlepath(csiebox_client* client, char *localpath)
 			continue;
 		strcpy(suffix, direntry->d_name);
 		lstat(localpath, &statbuf);
-		//call handlefile to sync
-		handlefile(client, localpath, &statbuf, TW_F);
+		fileinfo ele;
+		strncpy(ele.path, localpath, strlen(localpath));
+		ele.path[strlen(localpath)] = '\0';
+
+		fprintf(stderr, "get file: %s\n", ele.path);
+		memcpy(&ele.statbuf, &statbuf, sizeof(struct stat));
+		insertArray(list, ele);
 		if (S_ISDIR(statbuf.st_mode)) {
 			// get a subdirectory, call walkdir recursive
-			handlepath(client, localpath);
+			handlepath(localpath, list);
 		}
 	}
 	suffix[-1] = '\0';
@@ -374,39 +381,26 @@ handlepath(csiebox_client* client, char *localpath)
 }
 
 int
-handlefile(csiebox_client* client, const char *pathname, const struct stat *statptr,int type)
+handlefile(csiebox_client* client, fileinfo* info)
 {
-	switch(type){
-		case TW_F:
-			switch(statptr->st_mode & S_IFMT){
-				case S_IFREG:
-					printf("get a regular file: %s\n", pathname);
-					senddata(client, pathname, statptr);
-					break;
-				case S_IFLNK:
-					printf("get a slink: %s\n", pathname);
-					senddata(client, pathname, statptr);
-					break;
-				case S_IFDIR:
-					printf("get a directory: %s\n", pathname);
-					sendmeta(client, pathname, statptr);
-					break;
-				case S_IFBLK:
-				case S_IFCHR:
-				case S_IFIFO:
-					printf("Don't know how to handle OAO\n");
-					break;
-			}
+	switch(info->statbuf.st_mode & S_IFMT){
+		case S_IFREG:
+			printf("get a regular file: %s\n", info->path);
+			senddata(client, info->path, &info->statbuf);
 			break;
-		case TW_DNR:
-			fprintf(stderr, "can't read directory %s", pathname);
-			return 1;
-		case TW_NS:
-			fprintf(stderr, "stat error for %s", pathname);
-			return 1;
-		default: 
-			fprintf(stderr, "unknown type %d for pathname %s\n", type, pathname);
-			exit(1);
+		case S_IFLNK:
+			printf("get a slink: %s\n", info->path);
+			senddata(client, info->path, &info->statbuf);
+			break;
+		case S_IFDIR:
+			printf("get a directory: %s\n", info->path);
+			sendmeta(client, info->path, &info->statbuf);
+			break;
+		case S_IFBLK:
+		case S_IFCHR:
+		case S_IFIFO:
+			printf("Don't know how to handle OAO\n");
+			break;
 	}
-	return (0);
+	return 0;
 }
