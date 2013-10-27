@@ -13,7 +13,10 @@
 static int parse_arg(csiebox_client* client, int argc, char** argv);
 static int login(csiebox_client* client);
 static int sendmeta(csiebox_client* client, const char* syncfile, const struct stat* statptr);
+static int senddata(csiebox_client* client, const char* syncfile, const struct stat* statptr);
+static int senddataend(csiebox_client* client);
 static int sendfile(csiebox_client* client, const char* syncfile, const struct stat* statptr);
+static int sendslink(csiebox_client* client, const char* syncfile);
 static int sendhlink(csiebox_client* client);
 static int rmfile(csiebox_client *client); 
 int treewalk(csiebox_client *client);
@@ -199,8 +202,8 @@ static int sendmeta(csiebox_client* client, const char* syncfile, const struct s
 	return -1;
 }
 
-//automatic sync file up to server
-static int sendfile(csiebox_client* client, const char* syncfile, const struct stat* statptr) {
+//automatic sync data(file, slink, dir) up to server
+static int senddata(csiebox_client* client, const char* syncfile, const struct stat* statptr) {
 	switch( sendmeta(client, syncfile, statptr) ) {
 		case(CSIEBOX_PROTOCOL_STATUS_OK):
 			printf("no need to send file\n");
@@ -215,6 +218,33 @@ static int sendfile(csiebox_client* client, const char* syncfile, const struct s
 			fprintf(stderr, "something wrong uploading %s\n", syncfile);
 			return -1;
 	}
+	csiebox_protocol_file req;
+	memset(&req, 0, sizeof(req));
+	req.message.header.req.magic = CSIEBOX_PROTOCOL_MAGIC_REQ;
+	req.message.header.req.op = CSIEBOX_PROTOCOL_OP_SYNC_FILE;
+	req.message.header.req.client_id = client->client_id;
+	req.message.header.req.datalen = sizeof(req) - sizeof(req.message.header);
+	req.message.body.datalen = statptr->st_size;
+	req.message.body.pathlen = strlen(syncfile);
+	if (!send_message(client->conn_fd, &req, sizeof(req))) {
+		fprintf(stderr, "send fail - file protocol\n");
+		return -1;
+	}
+	if (!send_message(client->conn_fd, (void*)syncfile, strlen(syncfile))) {
+		fprintf(stderr, "send fail - file filename\n");
+		return -1;
+	}
+	switch(statptr->st_mode & S_IFMT){
+		case S_IFREG:
+			sendfile(client, syncfile, statptr);
+			break;
+		case S_IFLNK:
+			sendslink(client, syncfile);
+			break;
+	}
+}
+
+static int sendfile(csiebox_client* client, const char* syncfile, const struct stat* statptr) {
 	FILE *readfile = fopen(syncfile, "rb");
 	if (readfile == NULL) {
 		fprintf(stderr, "cannot open file for transfer: %s\n", syncfile);
@@ -228,22 +258,6 @@ static int sendfile(csiebox_client* client, const char* syncfile, const struct s
 	unsigned long filesize = statptr->st_size;
 	int numr = 0;
 
-	csiebox_protocol_file req;
-	memset(&req, 0, sizeof(req));
-	req.message.header.req.magic = CSIEBOX_PROTOCOL_MAGIC_REQ;
-	req.message.header.req.op = CSIEBOX_PROTOCOL_OP_SYNC_FILE;
-	req.message.header.req.client_id = client->client_id;
-	req.message.header.req.datalen = sizeof(req) - sizeof(req.message.header);
-	req.message.body.datalen = filesize;
-	req.message.body.pathlen = strlen(syncfile);
-	if (!send_message(client->conn_fd, &req, sizeof(req))) {
-		fprintf(stderr, "send fail - file protocol\n");
-		return -1;
-	}
-	if (!send_message(client->conn_fd, (void*)syncfile, strlen(syncfile))) {
-		fprintf(stderr, "send fail - file filename\n");
-		return -1;
-	}
 	while (filesize%BUFFER_SIZE > 0) {
 		if ((numr = fread(buffer, 1, filesize%BUFFER_SIZE, readfile)) != filesize%BUFFER_SIZE ) {
 			if (ferror(readfile) != 0) {
@@ -260,6 +274,27 @@ static int sendfile(csiebox_client* client, const char* syncfile, const struct s
 	fclose(readfile);
 	free(buffer);
 
+	return senddataend(client);
+}
+
+static int sendslink(csiebox_client* client, const char* syncfile) {
+	char *buffer = (char*)malloc(sizeof(char)*PATH_MAX);
+	if (buffer == NULL) {
+		fprintf(stderr, "cannot open memory for file buffer\n");
+		return -2;
+	}
+	int numr = readlink(syncfile, buffer, PATH_MAX);
+
+	if (!send_message(client->conn_fd, buffer, numr)) {
+		fprintf(stderr, "send file fail\n");
+		return -1;
+	}
+	free(buffer);
+
+	return senddataend(client);
+}
+
+static int senddataend(csiebox_client* client) {
 	csiebox_protocol_header header;
 	memset(&header, 0, sizeof(header));
 	if (recv_message(client->conn_fd, &header, sizeof(header))) {
@@ -344,11 +379,11 @@ handlefile(csiebox_client* client, const char *pathname, const struct stat *stat
 			switch(statptr->st_mode & S_IFMT){
 				case S_IFREG:
 					printf("get a regular file: %s\n", pathname);
-					sendfile(client, pathname, statptr);
+					senddata(client, pathname, statptr);
 					break;
 				case S_IFLNK:
 					printf("get a slink: %s\n", pathname);
-					//sendfile(client, pathname, statptr);
+					senddata(client, pathname, statptr);
 					break;
 				case S_IFDIR:
 					printf("get a directory: %s\n", pathname);
