@@ -12,6 +12,16 @@ extern "C" {
 #include <sys/stat.h>
 
 /*
+ * permission
+ */
+#define DIR_S_FLAG (S_IRWXU | S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH)//permission you can use to create new file
+#define REG_S_FLAG (S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)//permission you can use to create new directory
+/*
+ * constant
+ */
+#define BUFFER_SIZE 16394
+
+/*
  * protocol
  */
 
@@ -98,10 +108,11 @@ typedef union {
   struct {
     csiebox_protocol_header header;
     struct {
+      uint32_t pathlen;
       uint64_t datalen;
     } body;
   } message;
-  uint8_t bytes[sizeof(csiebox_protocol_header) + 8];
+  uint8_t bytes[sizeof(csiebox_protocol_header) + 12];
 } csiebox_protocol_file;
 
 //header used to sync hard link

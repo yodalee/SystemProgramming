@@ -12,13 +12,13 @@
 
 static int parse_arg(csiebox_client* client, int argc, char** argv);
 static int login(csiebox_client* client);
-static int sendfile(csiebox_client* client);
-static int sendmeta(csiebox_client* client);
+static int sendmeta(csiebox_client* client, const char* syncfile, const struct stat* statptr);
+static int sendfile(csiebox_client* client, const char* syncfile, const struct stat* statptr);
 static int sendhlink(csiebox_client* client);
 static int rmfile(csiebox_client *client); 
 int treewalk(csiebox_client *client);
-int handlepath(char* path);
-int handlefile(const char* path, const struct stat *statptr, int type);
+int handlepath(csiebox_client *client, char* path);
+int handlefile(csiebox_client *client, const char* path, const struct stat *statptr, int type);
 enum {TW_F, TW_DNR, TW_NS};
 /* file other than directory */
 /* directory */
@@ -165,6 +165,112 @@ static int login(csiebox_client* client) {
   return 0;
 }
 
+//sendmeta return whether file need update
+static int sendmeta(csiebox_client* client, const char* syncfile, const struct stat* statptr) {
+	//prepare protocol meta content
+	csiebox_protocol_meta req;
+	memset(&req, 0, sizeof(req));
+	req.message.header.req.magic = CSIEBOX_PROTOCOL_MAGIC_REQ;
+	req.message.header.req.op = CSIEBOX_PROTOCOL_OP_SYNC_META;
+	req.message.header.req.client_id = client->client_id;
+	req.message.header.req.datalen = sizeof(req) - sizeof(req.message.header);
+	req.message.body.pathlen = strlen(syncfile);
+	memcpy(&req.message.body.stat, statptr, sizeof(struct stat));
+	md5_file(syncfile, req.message.body.hash);
+
+	//send content
+	if (!send_message(client->conn_fd, &req, sizeof(req))) {
+		fprintf(stderr, "send fail - meta protocol\n");
+		return -1;
+	}
+	if (!send_message(client->conn_fd, (void*)syncfile, strlen(syncfile))) {
+		fprintf(stderr, "send fail - meta filename\n");
+		return -1;
+	}
+
+	csiebox_protocol_header header;
+	memset(&header, 0, sizeof(header));
+	if (recv_message(client->conn_fd, &header, sizeof(header))) {
+		if (header.res.magic == CSIEBOX_PROTOCOL_MAGIC_RES &&
+			header.res.op == CSIEBOX_PROTOCOL_OP_SYNC_META) {
+			return header.res.status;
+		}
+	}
+	return -1;
+}
+
+//automatic sync file up to server
+static int sendfile(csiebox_client* client, const char* syncfile, const struct stat* statptr) {
+	switch( sendmeta(client, syncfile, statptr) ) {
+		case(CSIEBOX_PROTOCOL_STATUS_OK):
+			printf("no need to send file\n");
+			return 0;
+		case(CSIEBOX_PROTOCOL_STATUS_FAIL):
+			printf("there is something wrong on server\n");
+			return -1;
+		case(CSIEBOX_PROTOCOL_STATUS_MORE):
+			printf("Start uploading file %s\n", syncfile);
+			break;
+		case -1:
+			fprintf(stderr, "something wrong uploading %s\n", syncfile);
+			return -1;
+	}
+	FILE *readfile = fopen(syncfile, "rb");
+	if (readfile == NULL) {
+		fprintf(stderr, "cannot open file for transfer: %s\n", syncfile);
+		return -1;
+	}
+	char *buffer = (char*)malloc(sizeof(char)*BUFFER_SIZE);
+	if (buffer == NULL) {
+		fprintf(stderr, "cannot open memory for file buffer\n");
+		return -2;
+	}
+	unsigned long filesize = statptr->st_size;
+	int numr = 0;
+
+	csiebox_protocol_file req;
+	memset(&req, 0, sizeof(req));
+	req.message.header.req.magic = CSIEBOX_PROTOCOL_MAGIC_REQ;
+	req.message.header.req.op = CSIEBOX_PROTOCOL_OP_SYNC_FILE;
+	req.message.header.req.client_id = client->client_id;
+	req.message.header.req.datalen = sizeof(req) - sizeof(req.message.header);
+	req.message.body.datalen = filesize;
+	req.message.body.pathlen = strlen(syncfile);
+	if (!send_message(client->conn_fd, &req, sizeof(req))) {
+		fprintf(stderr, "send fail - file protocol\n");
+		return -1;
+	}
+	if (!send_message(client->conn_fd, (void*)syncfile, strlen(syncfile))) {
+		fprintf(stderr, "send fail - file filename\n");
+		return -1;
+	}
+	while (filesize%BUFFER_SIZE > 0) {
+		if ((numr = fread(buffer, 1, filesize%BUFFER_SIZE, readfile)) != filesize%BUFFER_SIZE ) {
+			if (ferror(readfile) != 0) {
+				fprintf(stderr, "read file error: %s\n", syncfile);
+				return -1;
+			}
+		}
+		if (!send_message(client->conn_fd, buffer, numr)) {
+			fprintf(stderr, "send file fail\n");
+			return -1;
+		}
+		filesize -= numr;
+	}
+	fclose(readfile);
+	free(buffer);
+
+	csiebox_protocol_header header;
+	memset(&header, 0, sizeof(header));
+	if (recv_message(client->conn_fd, &header, sizeof(header))) {
+		if (header.res.magic == CSIEBOX_PROTOCOL_MAGIC_RES &&
+			header.res.op == CSIEBOX_PROTOCOL_OP_SYNC_FILE &&
+			header.res.status == CSIEBOX_PROTOCOL_STATUS_OK) {
+			return 0;
+		}
+	}
+	return -1;
+}
 //--------------------------------------------
 // Function: treewalk
 // Description: 
@@ -178,7 +284,7 @@ treewalk(csiebox_client* client)
 	strncpy(filepath, client->arg.path, PATH_MAX);
 
 	//try to make client directory
-	if ( mkdir(filepath, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH) == -1){
+	if ( mkdir(filepath, DIR_S_FLAG) == -1){
 		if( EEXIST != errno ){
 			fprintf(stderr, "Error when creating client home directory\n");
 			exit(1);
@@ -189,11 +295,11 @@ treewalk(csiebox_client* client)
 	chdir(filepath);
 	strncpy(filepath, ".", 2);
 	filepath[1] == '\0';
-	return(handlepath(filepath));
+	return(handlepath(client, filepath));
 }
 
 int
-handlepath(char *localpath)
+handlepath(csiebox_client* client, char *localpath)
 {
 	static int		maxLen;
 	static char		maxName[PATH_MAX+1];
@@ -205,7 +311,7 @@ handlepath(char *localpath)
 	
 	// check directory open permission
 	if ((dp = opendir(localpath)) == NULL) {
-		return handlefile(localpath, &statbuf, TW_DNR);
+		return handlefile(client, localpath, &statbuf, TW_DNR);
 	}
 	//is directory walk through directory
 	suffix = localpath + strlen(localpath);
@@ -219,10 +325,10 @@ handlepath(char *localpath)
 		strcpy(suffix, direntry->d_name);
 		lstat(localpath, &statbuf);
 		//call handlefile to sync
-		handlefile(localpath, &statbuf, TW_F);
+		handlefile(client, localpath, &statbuf, TW_F);
 		if (S_ISDIR(statbuf.st_mode)) {
 			// get a subdirectory, call walkdir recursive
-			handlepath(localpath);
+			handlepath(client, localpath);
 		}
 	}
 	suffix[-1] = '\0';
@@ -231,17 +337,28 @@ handlepath(char *localpath)
 }
 
 int
-handlefile(const char *pathname, const struct stat *statptr,int type)
+handlefile(csiebox_client* client, const char *pathname, const struct stat *statptr,int type)
 {
 	switch(type){
 		case TW_F:
 			switch(statptr->st_mode & S_IFMT){
-				case S_IFREG: printf("regular: %s\n", pathname); break;
-				case S_IFBLK: printf("XD\n"); break;
-				case S_IFCHR: printf("XD\n"); break;
-				case S_IFIFO: printf("XD\n"); break;
-				case S_IFLNK: printf("slink: %s\n", pathname); break;
-				case S_IFDIR: printf("getdir: %s\n", pathname); break;
+				case S_IFREG:
+					printf("get a regular file: %s\n", pathname);
+					sendfile(client, pathname, statptr);
+					break;
+				case S_IFLNK:
+					printf("get a slink: %s\n", pathname);
+					//sendfile(client, pathname, statptr);
+					break;
+				case S_IFDIR:
+					printf("get a directory: %s\n", pathname);
+					//sendfile(client, pathname, statptr);
+					break;
+				case S_IFBLK:
+				case S_IFCHR:
+				case S_IFIFO:
+					printf("Don't know how to handle OAO\n");
+					break;
 			}
 			break;
 		case TW_DNR:

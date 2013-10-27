@@ -22,9 +22,10 @@ static void login(
 static void logout(csiebox_server* server, int conn_fd);
 static char* get_user_homedir(
   csiebox_server* server, csiebox_client_info* info);
-
-#define DIR_S_FLAG (S_IRWXU | S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH)//permission you can use to create new file
-#define REG_S_FLAG (S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)//permission you can use to create new directory
+static void checkmeta(
+	csiebox_server* server, int conn_fd, csiebox_protocol_meta* meta);
+static void getfile(
+	csiebox_server* server, int conn_fd, csiebox_protocol_file* file);
 
 //read config file, and start to listen
 void csiebox_server_init(
@@ -171,14 +172,14 @@ static void handle_request(csiebox_server* server, int conn_fd) {
         fprintf(stderr, "sync meta\n");
         csiebox_protocol_meta meta;
         if (complete_message_with_header(conn_fd, &header, &meta)) {
-          // TODO
+			checkmeta(server, conn_fd, &meta);
         }
         break;
       case CSIEBOX_PROTOCOL_OP_SYNC_FILE:
         fprintf(stderr, "sync file\n");
         csiebox_protocol_file file;
         if (complete_message_with_header(conn_fd, &header, &file)) {
-          // TODO
+			getfile(server, conn_fd, &file);
         }
         break;
       case CSIEBOX_PROTOCOL_OP_SYNC_HARDLINK:
@@ -304,3 +305,111 @@ static char* get_user_homedir(
   return ret;
 }
 
+//handle the send meta request
+//return STATUS_OK if no need to sendfile
+//return STATUS_FAIL if something wrong
+//return STATUS_MORE if need sendfile
+static void checkmeta(
+		csiebox_server* server, int conn_fd, csiebox_protocol_meta* meta) {
+	//extract user info header
+	int status = 1;
+	csiebox_client_info* info =
+	  (csiebox_client_info*)malloc(sizeof(csiebox_client_info));
+	memset(info, 0, sizeof(csiebox_client_info));
+	int length = meta->message.body.pathlen;
+	int client_id = meta->message.header.req.client_id;
+
+	//get home directory from client_id
+	info = server->client[client_id];
+    char* fullpath = get_user_homedir(server, info);
+	char* filepath = (char*)malloc(length);
+	recv_message(conn_fd, filepath, length);
+	filepath[length] = '\0';
+	if (filepath[0] == '.') {
+		memmove(filepath, filepath+1, strlen(filepath)); //remove first .
+	}
+	strncat(fullpath, filepath, strlen(filepath));
+
+	//checkmeta
+	uint8_t filehash[MD5_DIGEST_LENGTH];
+	md5_file(fullpath, filehash);
+	if (memcmp(meta->message.body.hash,
+		filehash, MD5_DIGEST_LENGTH) != 0) {
+		fprintf(stderr, "md5 is different\n");
+		status = CSIEBOX_PROTOCOL_STATUS_MORE;
+		//return more
+	} else {
+		fprintf(stderr, "md5 is identical\n");
+		status = CSIEBOX_PROTOCOL_STATUS_OK;
+		//return ok
+	}
+
+	csiebox_protocol_header header;
+	memset(&header, 0, sizeof(header));
+	header.res.magic = CSIEBOX_PROTOCOL_MAGIC_RES;
+	header.res.op = CSIEBOX_PROTOCOL_OP_SYNC_META;
+	header.res.datalen = 0;
+	header.res.status = status;
+	send_message(conn_fd, &header, sizeof(header));
+
+	free(fullpath);
+	free(filepath);
+}
+
+static void getfile(
+	csiebox_server* server, int conn_fd, csiebox_protocol_file* file) {
+	//extract user info header
+	int status = 1;
+	csiebox_client_info* info =
+	  (csiebox_client_info*)malloc(sizeof(csiebox_client_info));
+	memset(info, 0, sizeof(csiebox_client_info));
+	unsigned long filesize = file->message.body.datalen;
+	int length = file->message.body.pathlen;
+	int client_id = file->message.header.req.client_id;
+
+	//get home directory from client_id
+	info = server->client[client_id];
+    char* fullpath = get_user_homedir(server, info);
+	char* filepath = (char*)malloc(length);
+	recv_message(conn_fd, filepath, length);
+	filepath[length] = '\0';
+	if (filepath[0] == '.') {
+		memmove(filepath, filepath+1, strlen(filepath)); //remove first .
+	}
+	strncat(fullpath, filepath, strlen(filepath));
+
+	//get file, here is using some dangerous mechanism
+	int succ = 1;
+	FILE* writefile= fopen(fullpath, "wb");
+	if (writefile == NULL) {
+		fprintf(stderr, "cannot open writefile\n");
+		succ = 0;
+	}
+	char* buffer = (char*)malloc(sizeof(char)*BUFFER_SIZE);
+	if (buffer == NULL) {
+		fprintf(stderr, "cannot allocate write memory\n");
+		succ = 0;
+	}
+
+	while (succ && (filesize != 0)) {
+		if (!recv_message(conn_fd, buffer, filesize % BUFFER_SIZE)) {
+			fprintf(stderr, "Something wrong during file transfer\n");
+			succ = 0;
+			break;
+		}
+		fwrite( buffer, 1, filesize%BUFFER_SIZE, writefile);
+		filesize -= filesize%BUFFER_SIZE;
+	}
+	fclose(writefile);
+
+	csiebox_protocol_header header;
+	memset(&header, 0, sizeof(header));
+	header.res.magic = CSIEBOX_PROTOCOL_MAGIC_RES;
+	header.res.op = CSIEBOX_PROTOCOL_OP_SYNC_FILE;
+	header.res.datalen = 0;
+	header.res.status = (succ)? CSIEBOX_PROTOCOL_STATUS_OK: CSIEBOX_PROTOCOL_STATUS_FAIL;
+	send_message(conn_fd, &header, sizeof(header));
+
+	free(fullpath);
+	free(filepath);
+}
