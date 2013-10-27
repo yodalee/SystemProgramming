@@ -22,10 +22,13 @@ static void login(
 static void logout(csiebox_server* server, int conn_fd);
 static char* get_user_homedir(
   csiebox_server* server, csiebox_client_info* info);
+void gen_fullpath(char* fullpath, char* localpath, int length );
 static void checkmeta(
 	csiebox_server* server, int conn_fd, csiebox_protocol_meta* meta);
 static void getfile(
 	csiebox_server* server, int conn_fd, csiebox_protocol_file* file);
+static void sethlink(
+	csiebox_server* server, int conn_fd, csiebox_protocol_hardlink* file);
 
 //read config file, and start to listen
 void csiebox_server_init(
@@ -186,7 +189,7 @@ static void handle_request(csiebox_server* server, int conn_fd) {
         fprintf(stderr, "sync hardlink\n");
         csiebox_protocol_hardlink hardlink;
         if (complete_message_with_header(conn_fd, &header, &hardlink)) {
-          // TODO
+			sethlink(server, conn_fd, &hardlink);
         }
         break;
       case CSIEBOX_PROTOCOL_OP_SYNC_END:
@@ -305,6 +308,14 @@ static char* get_user_homedir(
   return ret;
 }
 
+void gen_fullpath(char* fullpath, char* localpath, int length) {
+	localpath[length] = '\0';
+	if (localpath[0] == '.') {
+		memmove(localpath, localpath+1, strlen(localpath)); //remove first .
+	}
+	strncat(fullpath, localpath, strlen(localpath));
+}
+
 //handle the send meta request, mkdir if the meta is a directory
 //return STATUS_OK if no need to sendfile
 //return STATUS_FAIL if something wrong
@@ -324,11 +335,7 @@ static void checkmeta(
     char* fullpath = get_user_homedir(server, info);
 	char* filepath = (char*)malloc(length);
 	recv_message(conn_fd, filepath, length);
-	filepath[length] = '\0';
-	if (filepath[0] == '.') {
-		memmove(filepath, filepath+1, strlen(filepath)); //remove first .
-	}
-	strncat(fullpath, filepath, strlen(filepath));
+	gen_fullpath(fullpath, filepath, length);
 
 	//checkmeta, if is directory, just call mkdir. file then compare hash
 	if ((meta->message.body.stat.st_mode & S_IFMT) == S_IFDIR) {
@@ -374,14 +381,11 @@ static void getfile(
 
 	//get home directory from client_id
 	info = server->client[client_id];
+
     char* fullpath = get_user_homedir(server, info);
 	char* filepath = (char*)malloc(length);
 	recv_message(conn_fd, filepath, length);
-	filepath[length] = '\0';
-	if (filepath[0] == '.') {
-		memmove(filepath, filepath+1, strlen(filepath)); //remove first .
-	}
-	strncat(fullpath, filepath, strlen(filepath));
+	gen_fullpath(fullpath, filepath, length);
 
 	//get file, here is using some dangerous mechanism
 	int succ = 1;
@@ -416,5 +420,47 @@ static void getfile(
 	send_message(conn_fd, &header, sizeof(header));
 
 	free(fullpath);
+	free(filepath);
+}
+
+static void sethlink(
+	csiebox_server* server, int conn_fd, csiebox_protocol_hardlink* file) {
+	//extract user info header
+	int status = 1;
+	csiebox_client_info* info =
+	  (csiebox_client_info*)malloc(sizeof(csiebox_client_info));
+	memset(info, 0, sizeof(csiebox_client_info));
+	
+	int client_id = file->message.header.req.client_id;
+	int srclen = file->message.body.srclen;
+	int targetlen = file->message.body.targetlen;
+	int succ = 1;
+	
+	//get file fullpath
+	info = server->client[client_id];
+    char* srcpath = get_user_homedir(server, info);
+    char* targetpath = get_user_homedir(server, info);
+	char* filepath = (char*)malloc(PATH_MAX);
+	recv_message(conn_fd, filepath, srclen);
+	gen_fullpath(srcpath, filepath, srclen);
+	recv_message(conn_fd, filepath, targetlen);
+	gen_fullpath(targetpath, filepath, targetlen);
+	
+	//create hardlink
+	if ((link(srcpath, targetpath) != 0)) {
+		succ = 0;
+	}
+
+	//return protocol
+	csiebox_protocol_header header;
+	memset(&header, 0, sizeof(header));
+	header.res.magic = CSIEBOX_PROTOCOL_MAGIC_RES;
+	header.res.op = CSIEBOX_PROTOCOL_OP_SYNC_HARDLINK;
+	header.res.datalen = 0;
+	header.res.status = (succ)? CSIEBOX_PROTOCOL_STATUS_OK: CSIEBOX_PROTOCOL_STATUS_FAIL;
+	send_message(conn_fd, &header, sizeof(header));
+
+	free(srcpath);
+	free(targetpath);
 	free(filepath);
 }

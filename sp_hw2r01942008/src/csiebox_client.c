@@ -17,15 +17,13 @@ static int senddata(csiebox_client* client, const char* syncfile, const struct s
 static int senddataend(csiebox_client* client);
 static int sendfile(csiebox_client* client, const char* syncfile, const struct stat* statptr);
 static int sendslink(csiebox_client* client, const char* syncfile);
-static int sendhlink(csiebox_client* client);
+static int sendhlink(csiebox_client* client, fileinfo* src, fileinfo* target);
 static int rmfile(csiebox_client *client); 
 int treewalk(csiebox_client *client, filearray* list);
 int handlepath(char* path, filearray* list);
 int findmax(filearray* list);
+int checkfile(csiebox_client* client, filearray* list, int idx);
 int handlefile(csiebox_client *client, fileinfo* info);
-enum {TW_F, TW_DNR};
-/* file*/
-/* directory that can't be read */
 
 //read config file, and connect to server
 void csiebox_client_init(
@@ -70,8 +68,10 @@ int csiebox_client_run(csiebox_client* client) {
 	//find maximum
 	findmax(&list);
 
+	//upload file, check hardlink in the sametime
 	for (idx = 0; idx < list.used; ++idx) {
-		handlefile(client, &list.array[idx]);
+		checkfile(client, &list, idx);
+		//handlefile(client, &list.array[idx]);
 	}
 	return 1;
 }
@@ -305,6 +305,40 @@ static int sendslink(csiebox_client* client, const char* syncfile) {
 	return senddataend(client);
 }
 
+static int sendhlink(csiebox_client* client, fileinfo* src, fileinfo* target){
+	csiebox_protocol_hardlink req;
+	memset(&req, 0, sizeof(req));
+	req.message.header.req.magic = CSIEBOX_PROTOCOL_MAGIC_REQ;
+	req.message.header.req.op = CSIEBOX_PROTOCOL_OP_SYNC_HARDLINK;
+	req.message.header.req.client_id = client->client_id;
+	req.message.header.req.datalen = sizeof(req) - sizeof(req.message.header);
+	req.message.body.srclen = strlen(src->path);
+	req.message.body.targetlen = strlen(target->path);
+	if (!send_message(client->conn_fd, &req, sizeof(req))) {
+		fprintf(stderr, "send fail - hlink protocol\n");
+		return -1;
+	}
+	if (!send_message(client->conn_fd, (void*)src->path, strlen(src->path))) {
+		fprintf(stderr, "send fail - hlink src filename\n");
+		return -1;
+	}
+	if (!send_message(client->conn_fd, (void*)target->path, strlen(target->path))) {
+		fprintf(stderr, "send fail - hlink target filename\n");
+		return -1;
+	}
+
+	csiebox_protocol_header header;
+	memset(&header, 0, sizeof(header));
+	if (recv_message(client->conn_fd, &header, sizeof(header))) {
+		if (header.res.magic == CSIEBOX_PROTOCOL_MAGIC_RES &&
+			header.res.op == CSIEBOX_PROTOCOL_OP_SYNC_HARDLINK &&
+			header.res.status == CSIEBOX_PROTOCOL_STATUS_OK) {
+			return 0;
+		}
+	}
+	return -1;
+}
+
 static int senddataend(csiebox_client* client) {
 	csiebox_protocol_header header;
 	memset(&header, 0, sizeof(header));
@@ -385,6 +419,26 @@ handlepath(char *localpath, filearray* list)
 		fprintf(stderr, "can't close client directory %s", localpath);
 }
 
+int 
+checkfile(csiebox_client* client, filearray* list, int idx){
+	int i;
+	int isHlink = 0;
+	fileinfo* target = &list->array[idx];
+	//search for hardlink
+	if (target->statbuf.st_nlink > 1 &&
+			(target->statbuf.st_mode & S_IFMT) == S_IFREG) {
+		for (i = 0; i < idx; i++) {
+			if (target->statbuf.st_ino == list->array[i].statbuf.st_ino &&
+			   (target->statbuf.st_dev == list->array[i].statbuf.st_dev)) {
+				printf("get a hard link from %s to %s\n", target->path, list->array[i].path);
+				sendhlink(client, &list->array[i], target);
+				return 0;
+			}
+		}
+	}
+	handlefile(client, target);
+}
+
 int
 handlefile(csiebox_client* client, fileinfo* info)
 {
@@ -405,7 +459,7 @@ handlefile(csiebox_client* client, fileinfo* info)
 		case S_IFCHR:
 		case S_IFIFO:
 			printf("Don't know how to handle OAO\n");
-			break;
+			return -1;
 	}
 	return 0;
 }
@@ -416,7 +470,8 @@ int findmax( filearray* list ){
 	int maxidx = 0;
 	struct stat statbuf;
 	for (idx = 0; idx < list->used; ++idx) {
-		if (strlen(list->array[idx].path) > maxlen) {
+		if (strlen(list->array[idx].path) > maxlen &&
+				strcmp(list->array[idx].path, "./longestPath.txt") != 0) {
 			maxlen = strlen(list->array[idx].path);
 			maxidx = idx;
 		}
