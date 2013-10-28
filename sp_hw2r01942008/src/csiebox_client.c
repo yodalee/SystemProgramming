@@ -5,13 +5,15 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <errno.h>
 #include <string.h>
 #include <dirent.h>
 #include <sys/stat.h>
-#include <errno.h>
+#include <linux/inotify.h>
 
 static int parse_arg(csiebox_client* client, int argc, char** argv);
 static int login(csiebox_client* client);
+static int monitor(csiebox_client* client, filearray* list);
 static int sendmeta(csiebox_client* client, const char* syncfile, const struct stat* statptr);
 static int senddata(csiebox_client* client, const char* syncfile, const struct stat* statptr);
 static int senddataend(csiebox_client* client);
@@ -23,6 +25,7 @@ int treewalk(csiebox_client *client, filearray* list);
 int handlepath(char* path, filearray* list);
 int findmax(filearray* list);
 int checkfile(csiebox_client* client, filearray* list, int idx);
+int findfile(filearray* list, char* filename);
 int handlefile(csiebox_client *client, fileinfo* info);
 
 //read config file, and connect to server
@@ -71,8 +74,12 @@ int csiebox_client_run(csiebox_client* client) {
 	//upload file, check hardlink in the sametime
 	for (idx = 0; idx < list.used; ++idx) {
 		checkfile(client, &list, idx);
-		//handlefile(client, &list.array[idx]);
 	}
+	
+	//start monitor modification
+	monitor(client, &list);
+
+	freeArray(&list);
 	return 1;
 }
 
@@ -175,6 +182,63 @@ static int login(csiebox_client* client) {
     }
   }
   return 0;
+}
+
+static int monitor(csiebox_client* client, filearray* list){
+	int length, i = 0, idx = 0;
+	int fd;
+	int wd;
+	char buffer[EVENT_BUF_LEN];
+	memset(buffer, 0, EVENT_BUF_LEN);
+
+	//create a instance and returns a file descriptor
+	//add directory "." to watch list with specified events
+	fd = inotify_init();
+	if (fd < 0) {
+		perror("inotify_init");
+	}
+	wd = inotify_add_watch(fd, client->arg.path, IN_CREATE | IN_DELETE | IN_ATTRIB | IN_MODIFY);
+
+	fprintf(stderr, "Start monitor directory: %s\n", client->arg.path);
+	while ((length = read(fd, buffer, EVENT_BUF_LEN)) > 0) {
+		i = 0;
+
+		while (i < length) {
+			struct inotify_event* event = (struct inotify_event*)&buffer[i];
+			if (event->mask & IN_CREATE) {
+				//we have to ignore temporary file
+				fileinfo ele;
+				strcpy(ele.path, "./");
+				strncat(ele.path, event->name, strlen(event->name));
+				ele.path[strlen(event->name)+2] = '\0';
+				lstat(ele.path, &ele.statbuf);
+				insertArray(list, ele);
+				printf("create file/dir %s\n", ele.path);
+				checkfile(client, list, list->used-1);
+			}
+			if ((event->mask & IN_ATTRIB) ||
+			   (event->mask & IN_MODIFY)) {
+				char* buf = (char*)malloc(PATH_MAX);
+				strcpy(buf, "./");
+				strncat(buf, event->name, strlen(event->name));
+				buf[strlen(event->name)+2] = '\0';
+				
+				printf("modify attrib/content of file: %s\n", buf);
+				if ((idx = findfile(list, buf)) >= 0) {
+					checkfile(client, list, idx);
+				}
+				free(buf);
+			}
+			if (event->mask & IN_DELETE) {
+				printf("delete ");
+			}
+			i += EVENT_SIZE + event->len;
+		}
+		memset(buffer, 0, EVENT_BUF_LEN);
+	}
+	//inotify_rm_watch(fd, wd);
+	close(fd);
+	return 0;
 }
 
 //sendmeta return whether file need update, or send directory path to server
@@ -417,6 +481,19 @@ handlepath(char *localpath, filearray* list)
 	suffix[-1] = '\0';
 	if (closedir(dp) < 0) 
 		fprintf(stderr, "can't close client directory %s", localpath);
+}
+
+int
+findfile(filearray* list, char* filename){
+	int i = 0;
+	for (i = 0; i < list->used; ++i) {
+		printf("compare %s <> %s \n", list->array[i].path, filename);
+		if ((strncmp(list->array[i].path, filename, PATH_MAX)) == 0) {
+			printf("return value: %d\n", i);
+			return i;
+		}
+	}
+	return -1;
 }
 
 int 

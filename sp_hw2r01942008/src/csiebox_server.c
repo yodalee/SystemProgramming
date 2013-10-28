@@ -346,13 +346,16 @@ static void checkmeta(
 		md5_file(fullpath, filehash);
 		if (memcmp(meta->message.body.hash,
 			filehash, MD5_DIGEST_LENGTH) != 0) {
+			//return more
 			fprintf(stderr, "md5 is different\n");
 			status = CSIEBOX_PROTOCOL_STATUS_MORE;
-			//return more
 		} else {
+			//update meta content, return ok
+			struct stat statbuf;
+			lstat(fullpath, &statbuf);
+			memcpy(&statbuf, &meta->message.body.stat, sizeof(struct stat));
 			fprintf(stderr, "md5 is identical\n");
 			status = CSIEBOX_PROTOCOL_STATUS_OK;
-			//return ok
 		}
 	}
 
@@ -371,7 +374,6 @@ static void checkmeta(
 static void getfile(
 	csiebox_server* server, int conn_fd, csiebox_protocol_file* file) {
 	//extract user info header
-	int status = 1;
 	csiebox_client_info* info =
 	  (csiebox_client_info*)malloc(sizeof(csiebox_client_info));
 	memset(info, 0, sizeof(csiebox_client_info));
@@ -389,7 +391,7 @@ static void getfile(
 
 	//get file, here is using some dangerous mechanism
 	int succ = 1;
-	FILE* writefile= fopen(fullpath, "wb");
+	FILE* writefile= fopen(fullpath, "w");
 	if (writefile == NULL) {
 		fprintf(stderr, "cannot open writefile\n");
 		succ = 0;
