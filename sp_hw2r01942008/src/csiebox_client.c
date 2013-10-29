@@ -2,6 +2,7 @@
 
 #include "csiebox_common.h"
 #include "connect.h"
+#include "array.h"
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -20,12 +21,11 @@ static int senddataend(csiebox_client* client);
 static int sendfile(csiebox_client *client, const char *syncfile, const struct stat *statptr);
 static int sendslink(csiebox_client *client, const char *syncfile);
 static int sendhlink(csiebox_client *client, fileinfo *src, fileinfo *target);
-static int rmfile(csiebox_client *client); 
+static int rmfile(csiebox_client *client, const char *rmfile); 
 int treewalk(csiebox_client *client, filearray* list);
-int handlepath(char *path, filearray *list);
+int handlepath(char *path, filearray* list);
 int findmax(filearray *list);
 int checkfile(csiebox_client *client, filearray *list, int idx);
-int delfile(csiebox_client *client, filearray *list, int idx);
 int findfile(filearray *list, char *filename);
 int handlefile(csiebox_client *client, fileinfo* info);
 int isHiddenfile(char *filename);
@@ -204,10 +204,9 @@ static int monitor(csiebox_client* client, filearray* list){
 	fprintf(stderr, "Start monitor directory: %s\n", client->arg.path);
 	while ((length = read(fd, buffer, EVENT_BUF_LEN)) > 0) {
 		i = 0;
-
 		while (i < length) {
 			struct inotify_event* event = (struct inotify_event*)&buffer[i];
-			if (isHiddenfile(event->name)) {
+			if (!isHiddenfile(event->name)) {
 				if (event->mask & IN_CREATE) {
 					fileinfo ele;
 					strcpy(ele.path, "./");
@@ -239,14 +238,11 @@ static int monitor(csiebox_client* client, filearray* list){
 					
 					printf("delete file: %s\n", buf);
 					if ((idx = findfile(list, buf)) >= 0) {
-						checkfile(client, list, idx);
+						rmfile(client, list->array[idx].path);
+						delArray(list, idx);
 					}
 					free(buf);
 				}
-				free(buf);
-			}
-			if (event->mask & IN_DELETE) {
-				printf("delete ");
 			}
 			i += EVENT_SIZE + event->len;
 		}
@@ -349,6 +345,7 @@ static int sendfile(csiebox_client* client, const char* syncfile, const struct s
 	unsigned long filesize = statptr->st_size;
 	int numr = 0;
 
+	fprintf(stderr, "start send\n");
 	while (filesize%BUFFER_SIZE > 0) {
 		if ((numr = fread(buffer, 1, filesize%BUFFER_SIZE, readfile)) != filesize%BUFFER_SIZE ) {
 			if (ferror(readfile) != 0) {
@@ -412,6 +409,35 @@ static int sendhlink(csiebox_client* client, fileinfo* src, fileinfo* target){
 	if (recv_message(client->conn_fd, &header, sizeof(header))) {
 		if (header.res.magic == CSIEBOX_PROTOCOL_MAGIC_RES &&
 			header.res.op == CSIEBOX_PROTOCOL_OP_SYNC_HARDLINK &&
+			header.res.status == CSIEBOX_PROTOCOL_STATUS_OK) {
+			return 0;
+		}
+	}
+	return -1;
+}
+
+static int rmfile(csiebox_client *client, const char* path){
+	csiebox_protocol_rm req;
+	memset(&req, 0, sizeof(req));
+	req.message.header.req.magic = CSIEBOX_PROTOCOL_MAGIC_REQ;
+	req.message.header.req.op = CSIEBOX_PROTOCOL_OP_RM;
+	req.message.header.req.client_id = client->client_id;
+	req.message.header.req.datalen = sizeof(req) - sizeof(req.message.header);
+	req.message.body.pathlen = strlen(path);
+	if (!send_message(client->conn_fd, &req, sizeof(req))) {
+		fprintf(stderr, "send fail - rm protocol\n");
+		return -1;
+	}
+	if (!send_message(client->conn_fd, (void*)path, strlen(path))) {
+		fprintf(stderr, "send fail - rm filename\n");
+		return -1;
+	}
+
+	csiebox_protocol_header header;
+	memset(&header, 0, sizeof(header));
+	if (recv_message(client->conn_fd, &header, sizeof(header))) {
+		if (header.res.magic == CSIEBOX_PROTOCOL_MAGIC_RES &&
+			header.res.op == CSIEBOX_PROTOCOL_OP_RM &&
 			header.res.status == CSIEBOX_PROTOCOL_STATUS_OK) {
 			return 0;
 		}

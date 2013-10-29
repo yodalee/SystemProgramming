@@ -24,11 +24,13 @@ static char* get_user_homedir(
   csiebox_server* server, csiebox_client_info* info);
 void gen_fullpath(char* fullpath, char* localpath, int length );
 static void checkmeta(
-	csiebox_server* server, int conn_fd, csiebox_protocol_meta* meta);
+	csiebox_server* server, int conn_fd, csiebox_protocol_meta* rm);
 static void getfile(
-	csiebox_server* server, int conn_fd, csiebox_protocol_file* file);
+	csiebox_server* server, int conn_fd, csiebox_protocol_file* rm);
 static void sethlink(
-	csiebox_server* server, int conn_fd, csiebox_protocol_hardlink* file);
+	csiebox_server* server, int conn_fd, csiebox_protocol_hardlink* rm);
+static void removefile(
+	csiebox_server* server, int conn_fd, csiebox_protocol_rm *rm);
 
 //read config file, and start to listen
 void csiebox_server_init(
@@ -201,7 +203,7 @@ static void handle_request(csiebox_server* server, int conn_fd) {
         fprintf(stderr, "rm\n");
         csiebox_protocol_rm rm;
         if (complete_message_with_header(conn_fd, &header, &rm)) {
-          // TODO
+			removefile(server, conn_fd, &rm);
         }
 
         break;
@@ -428,7 +430,6 @@ static void getfile(
 static void sethlink(
 	csiebox_server* server, int conn_fd, csiebox_protocol_hardlink* file) {
 	//extract user info header
-	int status = 1;
 	csiebox_client_info* info =
 	  (csiebox_client_info*)malloc(sizeof(csiebox_client_info));
 	memset(info, 0, sizeof(csiebox_client_info));
@@ -464,5 +465,40 @@ static void sethlink(
 
 	free(srcpath);
 	free(targetpath);
+	free(filepath);
+}
+
+static void removefile(
+	csiebox_server* server, int conn_fd, csiebox_protocol_rm *rm){
+	csiebox_client_info* info =
+	  (csiebox_client_info*)malloc(sizeof(csiebox_client_info));
+	memset(info, 0, sizeof(csiebox_client_info));
+	
+	int client_id = rm->message.header.req.client_id;
+	int pathlen = rm->message.body.pathlen;
+	int succ = 1;
+	
+	//get file fullpath
+	info = server->client[client_id];
+    char* fullpath = get_user_homedir(server, info);
+	char* filepath = (char*)malloc(PATH_MAX);
+	recv_message(conn_fd, filepath, pathlen);
+	gen_fullpath(fullpath, filepath, pathlen);
+	
+	//create hardlink
+	if ((unlink(fullpath) != 0)) {
+		succ = 0;
+	}
+
+	//return protocol
+	csiebox_protocol_header header;
+	memset(&header, 0, sizeof(header));
+	header.res.magic = CSIEBOX_PROTOCOL_MAGIC_RES;
+	header.res.op = CSIEBOX_PROTOCOL_OP_RM;
+	header.res.datalen = 0;
+	header.res.status = (succ)? CSIEBOX_PROTOCOL_STATUS_OK: CSIEBOX_PROTOCOL_STATUS_FAIL;
+	send_message(conn_fd, &header, sizeof(header));
+
+	free(fullpath);
 	free(filepath);
 }
