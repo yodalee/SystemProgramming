@@ -1,0 +1,25 @@
+README
+--------------
+
+How to use:
+1. 修改client.cfg, server.cfg
+2. run server
+3. run client
+
+測試create inotify
+echo "content" > cdir/filename
+試過一定會觸發這個事件
+
+測試modify inotify
+echo "content" >> cdir/filename
+這個比較安全，用圖形介面大多不會觸發
+
+測試delete
+rm cdir/filename
+
+-------------
+
+然後…
+呃…
+client有時候會當掉，上傳時會直接卡住
+我還在找原因lol
