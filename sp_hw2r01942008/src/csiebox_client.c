@@ -11,22 +11,24 @@
 #include <sys/stat.h>
 #include <linux/inotify.h>
 
-static int parse_arg(csiebox_client* client, int argc, char** argv);
-static int login(csiebox_client* client);
-static int monitor(csiebox_client* client, filearray* list);
-static int sendmeta(csiebox_client* client, const char* syncfile, const struct stat* statptr);
-static int senddata(csiebox_client* client, const char* syncfile, const struct stat* statptr);
+static int parse_arg(csiebox_client *client, int argc, char **argv);
+static int login(csiebox_client *client);
+static int monitor(csiebox_client *client, filearray *list);
+static int sendmeta(csiebox_client *client, const char *syncfile, const struct stat *statptr);
+static int senddata(csiebox_client *client, const char *syncfile, const struct stat *statptr);
 static int senddataend(csiebox_client* client);
-static int sendfile(csiebox_client* client, const char* syncfile, const struct stat* statptr);
-static int sendslink(csiebox_client* client, const char* syncfile);
-static int sendhlink(csiebox_client* client, fileinfo* src, fileinfo* target);
+static int sendfile(csiebox_client *client, const char *syncfile, const struct stat *statptr);
+static int sendslink(csiebox_client *client, const char *syncfile);
+static int sendhlink(csiebox_client *client, fileinfo *src, fileinfo *target);
 static int rmfile(csiebox_client *client); 
 int treewalk(csiebox_client *client, filearray* list);
-int handlepath(char* path, filearray* list);
-int findmax(filearray* list);
-int checkfile(csiebox_client* client, filearray* list, int idx);
-int findfile(filearray* list, char* filename);
+int handlepath(char *path, filearray *list);
+int findmax(filearray *list);
+int checkfile(csiebox_client *client, filearray *list, int idx);
+int delfile(csiebox_client *client, filearray *list, int idx);
+int findfile(filearray *list, char *filename);
 int handlefile(csiebox_client *client, fileinfo* info);
+int isHiddenfile(char *filename);
 
 //read config file, and connect to server
 void csiebox_client_init(
@@ -205,27 +207,41 @@ static int monitor(csiebox_client* client, filearray* list){
 
 		while (i < length) {
 			struct inotify_event* event = (struct inotify_event*)&buffer[i];
-			if (event->mask & IN_CREATE) {
-				//we have to ignore temporary file
-				fileinfo ele;
-				strcpy(ele.path, "./");
-				strncat(ele.path, event->name, strlen(event->name));
-				ele.path[strlen(event->name)+2] = '\0';
-				lstat(ele.path, &ele.statbuf);
-				insertArray(list, ele);
-				printf("create file/dir %s\n", ele.path);
-				checkfile(client, list, list->used-1);
-			}
-			if ((event->mask & IN_ATTRIB) ||
-			   (event->mask & IN_MODIFY)) {
-				char* buf = (char*)malloc(PATH_MAX);
-				strcpy(buf, "./");
-				strncat(buf, event->name, strlen(event->name));
-				buf[strlen(event->name)+2] = '\0';
-				
-				printf("modify attrib/content of file: %s\n", buf);
-				if ((idx = findfile(list, buf)) >= 0) {
-					checkfile(client, list, idx);
+			if (isHiddenfile(event->name)) {
+				if (event->mask & IN_CREATE) {
+					fileinfo ele;
+					strcpy(ele.path, "./");
+					strncat(ele.path, event->name, strlen(event->name));
+					ele.path[strlen(event->name)+2] = '\0';
+					lstat(ele.path, &ele.statbuf);
+					insertArray(list, ele);
+					printf("create file/dir %s\n", ele.path);
+					checkfile(client, list, list->used-1);
+				}
+				if ((event->mask & IN_ATTRIB) ||
+				   (event->mask & IN_MODIFY)) {
+					char* buf = (char*)malloc(PATH_MAX);
+					strcpy(buf, "./");
+					strncat(buf, event->name, strlen(event->name));
+					buf[strlen(event->name)+2] = '\0';
+					
+					printf("modify attrib/content of file: %s\n", buf);
+					if ((idx = findfile(list, buf)) >= 0) {
+						checkfile(client, list, idx);
+					}
+					free(buf);
+				}
+				if (event->mask & IN_DELETE) {
+					char* buf = (char*)malloc(PATH_MAX);
+					strcpy(buf, "./");
+					strncat(buf, event->name, strlen(event->name));
+					buf[strlen(event->name)+2] = '\0';
+					
+					printf("delete file: %s\n", buf);
+					if ((idx = findfile(list, buf)) >= 0) {
+						checkfile(client, list, idx);
+					}
+					free(buf);
 				}
 				free(buf);
 			}
@@ -463,8 +479,9 @@ handlepath(char *localpath, filearray* list)
 	*suffix = '\0';
 	// walk through directory entry by readdir
 	while ((direntry = readdir(dp)) != NULL) {
-		if (strcmp(direntry->d_name, ".") == 0 || \
-			strcmp(direntry->d_name, "..") == 0)
+		if ((strcmp(direntry->d_name, ".") == 0) || \
+			(strcmp(direntry->d_name, "..") == 0) || \
+			isHiddenfile(direntry->d_name)) 
 			continue;
 		strcpy(suffix, direntry->d_name);
 		lstat(localpath, &statbuf);
@@ -487,7 +504,6 @@ int
 findfile(filearray* list, char* filename){
 	int i = 0;
 	for (i = 0; i < list->used; ++i) {
-		printf("compare %s <> %s \n", list->array[i].path, filename);
 		if ((strncmp(list->array[i].path, filename, PATH_MAX)) == 0) {
 			printf("return value: %d\n", i);
 			return i;
@@ -567,3 +583,8 @@ int findmax( filearray* list ){
 	return 0;
 }
 
+int 
+isHiddenfile(char *filename) 
+{
+	return (filename[0] == '.') ? 1 : 0;
+}
