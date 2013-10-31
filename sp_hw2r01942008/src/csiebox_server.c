@@ -27,7 +27,7 @@ static void checkmeta(
 	csiebox_server* server, int conn_fd, csiebox_protocol_meta* rm);
 static void getfile(
 	csiebox_server* server, int conn_fd, csiebox_protocol_file* rm);
-static void sethlink(
+static void gethlink(
 	csiebox_server* server, int conn_fd, csiebox_protocol_hardlink* rm);
 static void removefile(
 	csiebox_server* server, int conn_fd, csiebox_protocol_rm *rm);
@@ -191,7 +191,7 @@ static void handle_request(csiebox_server* server, int conn_fd) {
         fprintf(stderr, "sync hardlink\n");
         csiebox_protocol_hardlink hardlink;
         if (complete_message_with_header(conn_fd, &header, &hardlink)) {
-			sethlink(server, conn_fd, &hardlink);
+			gethlink(server, conn_fd, &hardlink);
         }
         break;
       case CSIEBOX_PROTOCOL_OP_SYNC_END:
@@ -381,6 +381,7 @@ static void getfile(
 	memset(info, 0, sizeof(csiebox_client_info));
 	unsigned long filesize = file->message.body.datalen;
 	int length = file->message.body.pathlen;
+	int isSlink = file->message.body.isSlink;
 	int client_id = file->message.header.req.client_id;
 
 	//get home directory from client_id
@@ -393,27 +394,37 @@ static void getfile(
 
 	//get file, here is using some dangerous mechanism
 	int succ = 1;
-	FILE* writefile= fopen(fullpath, "w");
-	if (writefile == NULL) {
-		fprintf(stderr, "cannot open writefile\n");
-		succ = 0;
-	}
-	char* buffer = (char*)malloc(sizeof(char)*BUFFER_SIZE);
-	if (buffer == NULL) {
-		fprintf(stderr, "cannot allocate write memory\n");
-		succ = 0;
-	}
-
-	while (succ && (filesize != 0)) {
-		if (!recv_message(conn_fd, buffer, filesize % BUFFER_SIZE)) {
-			fprintf(stderr, "Something wrong during file transfer\n");
+	if (isSlink) {
+		filepath = (char*)realloc(filepath, filesize);
+		if (!recv_message(conn_fd, filepath, filesize)) {
+			fprintf(stderr, "cannot get slink file content\n");
 			succ = 0;
-			break;
 		}
-		fwrite( buffer, 1, filesize%BUFFER_SIZE, writefile);
-		filesize -= filesize%BUFFER_SIZE;
+		filepath[filesize] = '\0';
+		symlink(filepath, fullpath);
+	} else {
+		FILE* writefile= fopen(fullpath, "w");
+		if (writefile == NULL) {
+			fprintf(stderr, "cannot open writefile\n");
+			succ = 0;
+		}
+		char* buffer = (char*)malloc(sizeof(char)*BUFFER_SIZE);
+		if (buffer == NULL) {
+			fprintf(stderr, "cannot allocate write memory\n");
+			succ = 0;
+		}
+
+		while (succ && (filesize != 0)) {
+			if (!recv_message(conn_fd, buffer, filesize % BUFFER_SIZE)) {
+				fprintf(stderr, "Something wrong during file transfer\n");
+				succ = 0;
+				break;
+			}
+			fwrite( buffer, 1, filesize%BUFFER_SIZE, writefile);
+			filesize -= filesize%BUFFER_SIZE;
+		}
+		fclose(writefile);
 	}
-	fclose(writefile);
 
 	csiebox_protocol_header header;
 	memset(&header, 0, sizeof(header));
@@ -427,7 +438,7 @@ static void getfile(
 	free(filepath);
 }
 
-static void sethlink(
+static void gethlink(
 	csiebox_server* server, int conn_fd, csiebox_protocol_hardlink* file) {
 	//extract user info header
 	csiebox_client_info* info =

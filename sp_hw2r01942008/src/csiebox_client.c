@@ -313,6 +313,7 @@ static int senddata(csiebox_client* client, const char* syncfile, const struct s
 	req.message.header.req.datalen = sizeof(req) - sizeof(req.message.header);
 	req.message.body.datalen = statptr->st_size;
 	req.message.body.pathlen = strlen(syncfile);
+	req.message.body.isSlink = ((statptr->st_mode & S_IFMT) == S_IFLNK)? 1:0;
 	if (!send_message(client->conn_fd, &req, sizeof(req))) {
 		fprintf(stderr, "send fail - file protocol\n");
 		return -1;

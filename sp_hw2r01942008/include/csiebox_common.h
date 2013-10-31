@@ -110,9 +110,10 @@ typedef union {
     struct {
       uint32_t pathlen;
       uint64_t datalen;
+	  uint8_t  isSlink;
     } body;
   } message;
-  uint8_t bytes[sizeof(csiebox_protocol_header) + 12];
+  uint8_t bytes[sizeof(csiebox_protocol_header) + 13];
 } csiebox_protocol_file;
 
 //header used to sync hard link
