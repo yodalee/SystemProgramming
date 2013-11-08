@@ -209,9 +209,8 @@ static int monitor(csiebox_client* client, filearray* list){
 			if (!isHiddenfile(event->name)) {
 				if (event->mask & IN_CREATE) {
 					fileinfo ele;
-					strcpy(ele.path, "./");
-					strncat(ele.path, event->name, strlen(event->name));
-					ele.path[strlen(event->name)+2] = '\0';
+					strncpy(ele.path, event->name, strlen(event->name));
+					ele.path[strlen(event->name)] = '\0';
 					lstat(ele.path, &ele.statbuf);
 					insertArray(list, ele);
 					printf("create file/dir %s\n", ele.path);
@@ -220,9 +219,8 @@ static int monitor(csiebox_client* client, filearray* list){
 				if ((event->mask & IN_ATTRIB) ||
 				   (event->mask & IN_MODIFY)) {
 					char* buf = (char*)malloc(PATH_MAX);
-					strcpy(buf, "./");
-					strncat(buf, event->name, strlen(event->name));
-					buf[strlen(event->name)+2] = '\0';
+					strncpy(buf, event->name, strlen(event->name));
+					buf[strlen(event->name)] = '\0';
 					
 					printf("modify attrib/content of file: %s\n", buf);
 					if ((idx = findfile(list, buf)) >= 0) {
@@ -232,9 +230,8 @@ static int monitor(csiebox_client* client, filearray* list){
 				}
 				if (event->mask & IN_DELETE) {
 					char* buf = (char*)malloc(PATH_MAX);
-					strcpy(buf, "./");
-					strncat(buf, event->name, strlen(event->name));
-					buf[strlen(event->name)+2] = '\0';
+					strncpy(buf, event->name, strlen(event->name));
+					buf[strlen(event->name)] = '\0';
 					
 					printf("delete file: %s\n", buf);
 					if ((idx = findfile(list, buf)) >= 0) {
@@ -513,7 +510,7 @@ handlepath(char *localpath, filearray* list)
 		strcpy(suffix, direntry->d_name);
 		lstat(localpath, &statbuf);
 		fileinfo ele;
-		strncpy(ele.path, localpath, strlen(localpath));
+		strncpy(ele.path, localpath+2, strlen(localpath)); //+2 to remove "./" at beginning
 		ele.path[strlen(localpath)] = '\0';
 		memcpy(&ele.statbuf, &statbuf, sizeof(struct stat));
 		insertArray(list, ele);

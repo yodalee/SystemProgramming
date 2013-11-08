@@ -22,7 +22,6 @@ static void login(
 static void logout(csiebox_server* server, int conn_fd);
 static char* get_user_homedir(
   csiebox_server* server, csiebox_client_info* info);
-void gen_fullpath(char* fullpath, char* localpath, int length );
 static void checkmeta(
 	csiebox_server* server, int conn_fd, csiebox_protocol_meta* rm);
 static void getfile(
@@ -306,16 +305,8 @@ static char* get_user_homedir(
   csiebox_server* server, csiebox_client_info* info) {
   char* ret = (char*)malloc(sizeof(char) * PATH_MAX);
   memset(ret, 0, PATH_MAX);
-  sprintf(ret, "%s/%s", server->arg.path, info->account.user);
+  sprintf(ret, "%s/%s/", server->arg.path, info->account.user);
   return ret;
-}
-
-void gen_fullpath(char* fullpath, char* localpath, int length) {
-	localpath[length] = '\0';
-	if (localpath[0] == '.') {
-		memmove(localpath, localpath+1, strlen(localpath)); //remove first .
-	}
-	strncat(fullpath, localpath, strlen(localpath));
 }
 
 //handle the send meta request, mkdir if the meta is a directory
@@ -337,7 +328,7 @@ static void checkmeta(
     char* fullpath = get_user_homedir(server, info);
 	char* filepath = (char*)malloc(length);
 	recv_message(conn_fd, filepath, length);
-	gen_fullpath(fullpath, filepath, length);
+	strncat(fullpath, filepath, length);
 
 	//checkmeta, if is directory, just call mkdir. file then compare hash
 	if ((meta->message.body.stat.st_mode & S_IFMT) == S_IFDIR) {
@@ -390,7 +381,7 @@ static void getfile(
     char* fullpath = get_user_homedir(server, info);
 	char* filepath = (char*)malloc(length);
 	recv_message(conn_fd, filepath, length);
-	gen_fullpath(fullpath, filepath, length);
+	strncat(fullpath, filepath, length);
 
 	//get file, here is using some dangerous mechanism
 	int succ = 1;
@@ -456,9 +447,9 @@ static void gethlink(
     char* targetpath = get_user_homedir(server, info);
 	char* filepath = (char*)malloc(PATH_MAX);
 	recv_message(conn_fd, filepath, srclen);
-	gen_fullpath(srcpath, filepath, srclen);
+	strncat(srcpath, filepath, srclen);
 	recv_message(conn_fd, filepath, targetlen);
-	gen_fullpath(targetpath, filepath, targetlen);
+	strncat(targetpath, filepath, targetlen);
 	
 	//create hardlink
 	if ((link(srcpath, targetpath) != 0)) {
@@ -494,7 +485,7 @@ static void removefile(
     char* fullpath = get_user_homedir(server, info);
 	char* filepath = (char*)malloc(PATH_MAX);
 	recv_message(conn_fd, filepath, pathlen);
-	gen_fullpath(fullpath, filepath, pathlen);
+	strncat(fullpath, filepath, pathlen);
 	
 	//create hardlink
 	if ((unlink(fullpath) != 0)) {
