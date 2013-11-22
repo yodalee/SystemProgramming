@@ -24,7 +24,6 @@ static int sendhlink(csiebox_client *client, fileinfo *src, fileinfo *target);
 static int rmfile(csiebox_client *client, const char *rmfile); 
 int treewalk(csiebox_client *client, filearray* list);
 int handlepath(char *path, filearray* list);
-int findmax(filearray *list);
 int checkfile(csiebox_client *client, filearray *list, int idx);
 int findfile(filearray *list, char *filename);
 int handlefile(csiebox_client *client, fileinfo* info);
@@ -57,7 +56,6 @@ void csiebox_client_init(
 //this is where client sends request, you sould write your code here
 int csiebox_client_run(csiebox_client* client) {
 	int idx = 0;
-	char longest[PATH_MAX];
 
 	if (!login(client)) {
 		fprintf(stderr, "login fail\n");
@@ -69,9 +67,6 @@ int csiebox_client_run(csiebox_client* client) {
 	filearray list;
 	initArray(&list, 10);
 	treewalk(client, &list);
-
-	//find maximum
-	findmax(&list);
 
 	//upload file, check hardlink in the sametime
 	for (idx = 0; idx < list.used; ++idx) {
@@ -115,7 +110,7 @@ static int parse_arg(csiebox_client* client, int argc, char** argv) {
     key[keylen] = '\0';
     vallen = getline(&val, &valsize, file) - 1;
     val[vallen] = '\0';
-    fprintf(stderr, "config (%d, %s)=(%d, %s)\n", keylen, key, vallen, val);
+    fprintf(stderr, "config (%zd, %s)=(%zd, %s)\n", keylen, key, vallen, val);
     if (strcmp("name", key) == 0) {
       if (vallen <= sizeof(client->arg.name)) {
         strncpy(client->arg.name, val, vallen);
@@ -478,19 +473,16 @@ treewalk(csiebox_client* client, filearray* list)
 	}
 	chdir(filepath);
 	strncpy(filepath, ".", 2);
-	filepath[1] == '\0';
+	filepath[1] = '\0';
 	return(handlepath(filepath, list));
 }
 
 int
 handlepath(char *localpath, filearray* list)
 {
-	static int		maxLen;
-	static char		maxName[PATH_MAX+1];
 	struct stat		statbuf;
 	struct dirent	*direntry;
 	DIR				*dp;
-	int				ret;
 	char			*suffix;
 	
 	// check directory open permission
@@ -539,7 +531,6 @@ findfile(filearray* list, char* filename){
 int 
 checkfile(csiebox_client* client, filearray* list, int idx){
 	int i;
-	int isHlink = 0;
 	fileinfo* target = &list->array[idx];
 	//search for hardlink
 	if (target->statbuf.st_nlink > 1 &&
@@ -578,32 +569,6 @@ handlefile(csiebox_client* client, fileinfo* info)
 			printf("Don't know how to handle OAO\n");
 			return -1;
 	}
-	return 0;
-}
-
-int findmax( filearray* list ){
-	int idx = 0;
-	int maxlen = 0;
-	int maxidx = 0;
-	struct stat statbuf;
-	for (idx = 0; idx < list->used; ++idx) {
-		if (strlen(list->array[idx].path) > maxlen &&
-				strcmp(list->array[idx].path, "./longestPath.txt") != 0) {
-			maxlen = strlen(list->array[idx].path);
-			maxidx = idx;
-		}
-	}
-	FILE* record = fopen(default_name, "w");
-	fprintf( record, "%s\n", list->array[maxidx].path);
-	fclose(record);
-	
-	lstat(default_name, &statbuf);
-	fileinfo ele;
-	strncpy(ele.path, default_name, strlen(default_name));
-	ele.path[strlen(default_name)] = '\0';
-	memcpy(&ele.statbuf, &statbuf, sizeof(struct stat));
-
-	insertArray(list, ele);
 	return 0;
 }
 

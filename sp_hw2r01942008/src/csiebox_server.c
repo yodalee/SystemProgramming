@@ -129,7 +129,7 @@ static int parse_arg(csiebox_server* server, int argc, char** argv) {
     key[keylen] = '\0';
     vallen = getline(&val, &valsize, file) - 1;
     val[vallen] = '\0';
-    fprintf(stderr, "config (%d, %s)=(%d, %s)\n", keylen, key, vallen, val);
+    fprintf(stderr, "config (%zu, %s)=(%zu, %s)\n", keylen, key, vallen, val);
     if (strcmp("path", key) == 0) {
       if (vallen <= sizeof(server->arg.path)) {
         strncpy(server->arg.path, val, vallen);
