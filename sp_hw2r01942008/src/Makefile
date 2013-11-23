@@ -1,7 +1,7 @@
 TARGET=port_register csiebox_client csiebox_server
 INCLUDE=-I../include
 BIN=../bin
-FLAG=-g -Wall
+FLAG=-g
 GCC=gcc
 #for c++
 #GCC=g++

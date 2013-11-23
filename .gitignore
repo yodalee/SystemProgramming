@@ -4,5 +4,6 @@ library
 fileMerger
 sdir
 cdir
+cdir2
 *.swp
 *.o

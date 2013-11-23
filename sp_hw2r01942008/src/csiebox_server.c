@@ -8,6 +8,8 @@
 #include <errno.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/select.h>
+#include <time.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
@@ -66,30 +68,79 @@ void csiebox_server_init(
 
 //wait client to connect and handle requests from connected socket fd
 int csiebox_server_run(csiebox_server* server) {
-  int conn_fd, conn_len;
-  struct sockaddr_in addr;
-  while (1) {
-    memset(&addr, 0, sizeof(addr));
-    conn_len = 0;
-    // waiting client connect
-    conn_fd = accept(
-      server->listen_fd, (struct sockaddr*)&addr, (socklen_t*)&conn_len);
-    if (conn_fd < 0) {
-      if (errno == ENFILE) {
-          fprintf(stderr, "out of file descriptor table\n");
-          continue;
-        } else if (errno == EAGAIN || errno == EINTR) {
-          continue;
-        } else {
-          fprintf(stderr, "accept err\n");
-          fprintf(stderr, "code: %s\n", strerror(errno));
-          break;
-        }
-    }
-    // handle request from connected socket fd
-    handle_request(server, conn_fd);
-  }
-  return 1;
+	int i;
+	const int maxlink = 1024;
+	//socket
+	int conn_fd, conn_len;
+	struct sockaddr_in addr;
+	int maxfd = server->listen_fd;
+	//active fd
+	int active_fd[maxlink];
+	for (i = 0; i < maxlink; ++i) {
+		active_fd[i] = 0;
+	}
+	int current_max = 0;
+
+	fd_set readset;
+	struct timeval tv;
+	
+	while (1) {
+		//wait forever, until any descriptor return
+		FD_ZERO(&readset);
+		FD_SET(server->listen_fd, &readset);
+		for (i = 0; i < maxlink; ++i) {
+			if(active_fd[i] != 0){
+				FD_SET(active_fd[i], &readset);
+			}
+		}
+		//reset waiting time
+		tv.tv_sec = 5;
+		tv.tv_usec = 0;
+		
+		switch (select(maxfd+1, &readset, NULL, NULL, &tv)) {
+			case -1:
+				fprintf(stderr, "select error\n");
+				return 1;
+			case 0:
+				continue;
+		}
+		// handle request from connected socket fd
+		for (i = 0; i < current_max; ++i) {
+			if (FD_ISSET(active_fd[i], &readset)) {
+				handle_request(server, conn_fd);
+			}
+		}
+		// A new connection
+		if (FD_ISSET(server->listen_fd, &readset)) {
+			memset(&addr, 0, sizeof(addr));
+			conn_len = 0;
+			// waiting client connect
+			conn_fd = accept(server->listen_fd, (struct sockaddr*)&addr, (socklen_t*)&conn_len);
+			if (conn_fd < 0) {
+				if (errno == ENFILE) {
+					fprintf(stderr, "out of file descriptor table\n");
+					continue;
+				} else if (errno == EAGAIN || errno == EINTR) {
+					continue;
+				} else {
+					fprintf(stderr, "accept err\n");
+					fprintf(stderr, "code: %s\n", strerror(errno));
+					break;
+				}
+			}
+			if (current_max < maxlink) {
+				active_fd[current_max++] = conn_fd;
+				fprintf(stderr, "New connection on file descriptor %d\n", conn_fd);
+				if (conn_fd > maxfd) {
+					maxfd = conn_fd;
+				}
+			} else {
+				fprintf(stderr, "Max connections exceed, close fd\n");
+				close(conn_fd);
+			}
+		}
+	}
+	return 1;
 }
 
 void csiebox_server_destroy(csiebox_server** server) {
@@ -158,61 +209,61 @@ static int parse_arg(csiebox_server* server, int argc, char** argv) {
 
 //this is where the server handle requests, you should write your code here
 static void handle_request(csiebox_server* server, int conn_fd) {
-  csiebox_protocol_header header;
-  memset(&header, 0, sizeof(header));
-  while (recv_message(conn_fd, &header, sizeof(header))) {
-    if (header.req.magic != CSIEBOX_PROTOCOL_MAGIC_REQ) {
-      continue;
-    }
-    switch (header.req.op) {
-      case CSIEBOX_PROTOCOL_OP_LOGIN:
-        fprintf(stderr, "login\n");
-        csiebox_protocol_login req;
-        if (complete_message_with_header(conn_fd, &header, &req)) {
-          login(server, conn_fd, &req);
-        }
-        break;
-      case CSIEBOX_PROTOCOL_OP_SYNC_META:
-        fprintf(stderr, "sync meta\n");
-        csiebox_protocol_meta meta;
-        if (complete_message_with_header(conn_fd, &header, &meta)) {
-			checkmeta(server, conn_fd, &meta);
-        }
-        break;
-      case CSIEBOX_PROTOCOL_OP_SYNC_FILE:
-        fprintf(stderr, "sync file\n");
-        csiebox_protocol_file file;
-        if (complete_message_with_header(conn_fd, &header, &file)) {
-			getfile(server, conn_fd, &file);
-        }
-        break;
-      case CSIEBOX_PROTOCOL_OP_SYNC_HARDLINK:
-        fprintf(stderr, "sync hardlink\n");
-        csiebox_protocol_hardlink hardlink;
-        if (complete_message_with_header(conn_fd, &header, &hardlink)) {
-			gethlink(server, conn_fd, &hardlink);
-        }
-        break;
-      case CSIEBOX_PROTOCOL_OP_SYNC_END:
-        fprintf(stderr, "sync end\n");
-        csiebox_protocol_header end;
-        // TODO
-        break;
-      case CSIEBOX_PROTOCOL_OP_RM:
-        fprintf(stderr, "rm\n");
-        csiebox_protocol_rm rm;
-        if (complete_message_with_header(conn_fd, &header, &rm)) {
-			removefile(server, conn_fd, &rm);
-        }
-
-        break;
-      default:
-        fprintf(stderr, "unknow op %x\n", header.req.op);
-        break;
-    }
-  }
-  fprintf(stderr, "end of connection\n");
-  logout(server, conn_fd);
+	csiebox_protocol_header header;
+	memset(&header, 0, sizeof(header));
+	recv_message(conn_fd, &header, sizeof(header));
+	if (header.req.magic != CSIEBOX_PROTOCOL_MAGIC_REQ) {
+		return;
+	}
+	switch (header.req.op) {
+		case CSIEBOX_PROTOCOL_OP_LOGIN:
+			fprintf(stderr, "login\n");
+			csiebox_protocol_login req;
+			if (complete_message_with_header(conn_fd, &header, &req)) {
+				if(login(server, conn_fd, &req) ){
+					synctime(server, conn_fd);
+				}
+			}
+			break;
+		case CSIEBOX_PROTOCOL_OP_SYNC_META:
+			fprintf(stderr, "sync meta\n");
+			csiebox_protocol_meta meta;
+			if (complete_message_with_header(conn_fd, &header, &meta)) {
+				checkmeta(server, conn_fd, &meta);
+			}
+			break;
+		case CSIEBOX_PROTOCOL_OP_SYNC_FILE:
+			fprintf(stderr, "sync file\n");
+			csiebox_protocol_file file;
+			if (complete_message_with_header(conn_fd, &header, &file)) {
+				getfile(server, conn_fd, &file);
+			}
+			break;
+		case CSIEBOX_PROTOCOL_OP_SYNC_HARDLINK:
+			fprintf(stderr, "sync hardlink\n");
+			csiebox_protocol_hardlink hardlink;
+			if (complete_message_with_header(conn_fd, &header, &hardlink)) {
+				gethlink(server, conn_fd, &hardlink);
+			}
+			break;
+		case CSIEBOX_PROTOCOL_OP_SYNC_END:
+			fprintf(stderr, "sync end\n");
+			csiebox_protocol_header end;
+			// TODO
+			break;
+		case CSIEBOX_PROTOCOL_OP_RM:
+			fprintf(stderr, "rm\n");
+			csiebox_protocol_rm rm;
+			if (complete_message_with_header(conn_fd, &header, &rm)) {
+				removefile(server, conn_fd, &rm);
+			}
+			break;
+		default:
+			fprintf(stderr, "unknown op %x\n", header.req.op);
+			break;
+	}
+	//fprintf(stderr, "end of connection\n");
+	//logout(server, conn_fd);
 }
 
 //open account file to get account information
@@ -411,7 +462,7 @@ static void getfile(
 				succ = 0;
 				break;
 			}
-			fwrite( buffer, 1, filesize%BUFFER_SIZE, writefile);
+			fwrite(buffer, 1, filesize%BUFFER_SIZE, writefile);
 			filesize -= filesize%BUFFER_SIZE;
 		}
 		fclose(writefile);
