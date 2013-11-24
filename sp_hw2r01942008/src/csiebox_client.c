@@ -239,7 +239,6 @@ static int monitor(csiebox_client* client, filearray* list){
 					fileinfo ele;
 					strncpy(ele.path, event->name, strlen(event->name));
 					ele.path[strlen(event->name)] = '\0';
-					lstat(ele.path, &ele.statbuf);
 					insertArray(list, ele);
 					printf("create file/dir %s\n", ele.path);
 					checkfile(client, list, list->used-1);
@@ -455,7 +454,6 @@ handlepath(char *localpath, filearray* list)
 		fileinfo ele;
 		strncpy(ele.path, localpath+2, strlen(localpath)); //+2 to remove "./" at beginning
 		ele.path[strlen(localpath)] = '\0';
-		memcpy(&ele.statbuf, &statbuf, sizeof(struct stat));
 		insertArray(list, ele);
 		if (S_ISDIR(statbuf.st_mode)) {
 			// get a subdirectory, call walkdir recursive
@@ -482,7 +480,9 @@ int
 checkfile(csiebox_client* client, filearray* list, int idx){
 	int i;
 	fileinfo* target = &list->array[idx];
+	lstat(info->path, &info->statbuf);
 	//search for hardlink
+	//get newest statbuf
 	if (target->statbuf.st_nlink > 1 &&
 			(target->statbuf.st_mode & S_IFMT) == S_IFREG) {
 		for (i = 0; i < idx; i++) {
@@ -500,8 +500,6 @@ checkfile(csiebox_client* client, filearray* list, int idx){
 int
 handlefile(csiebox_client* client, fileinfo* info)
 {
-	//get newest statbuf
-	lstat(info->path, &info->statbuf);
 	switch(info->statbuf.st_mode & S_IFMT){
 		case S_IFREG:
 			printf("get a regular file: %s\n", info->path);
