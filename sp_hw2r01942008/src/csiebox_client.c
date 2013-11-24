@@ -583,6 +583,8 @@ checkfile(csiebox_client* client, filearray* list, int idx){
 int
 handlefile(csiebox_client* client, fileinfo* info)
 {
+	//get newest statbuf
+	lstat(info->path, &info->statbuf);
 	switch(info->statbuf.st_mode & S_IFMT){
 		case S_IFREG:
 			printf("get a regular file: %s\n", info->path);
