@@ -202,16 +202,8 @@ synctime(csiebox_client* client){
 			send_message(client->conn_fd, &timestamp, sizeof(timestamp));
 		}
 	}
-	csiebox_protocol_header header;
-	memset(&header, 0, sizeof(header));
-	if (recv_message(client->conn_fd, &header, sizeof(header))) {
-		if (header.res.magic == CSIEBOX_PROTOCOL_MAGIC_RES &&
-			header.res.op == CSIEBOX_PROTOCOL_OP_SYNC_TIME &&
-			header.res.status == CSIEBOX_PROTOCOL_STATUS_OK) {
-			return 0;
-		}
-	}
-	return 1;
+
+	return getendheader(client->conn_fd, CSIEBOX_PROTOCOL_OP_SYNC_TIME);
 }
 
 static int monitor(csiebox_client* client, filearray* list){
@@ -480,9 +472,9 @@ int
 checkfile(csiebox_client* client, filearray* list, int idx){
 	int i;
 	fileinfo* target = &list->array[idx];
-	lstat(info->path, &info->statbuf);
-	//search for hardlink
 	//get newest statbuf
+	lstat(target->path, &target->statbuf);
+	//search for hardlink
 	if (target->statbuf.st_nlink > 1 &&
 			(target->statbuf.st_mode & S_IFMT) == S_IFREG) {
 		for (i = 0; i < idx; i++) {

@@ -11,12 +11,12 @@ int basesendregfile	(int conn_fd, const char* filepath, long filesize);
 int basesendhlink(int conn_fd, const char* filepath1, char* filepath2);
 int basesendslink(int conn_fd, const char* filepath);
 int basesendrm	(int conn_fd, const char* filepath);
-int getendheader(int conn_fd, csiebox_protocol_op header_type);
 
-int getfile	(int conn_fd, const char* filepath);
-int gethlink	(int conn_fd, const char* filepath1, char* filepath2);
-int getslink	(int conn_fd, const char* filepath);
-int getrm	(int conn_fd, const char* filepath);
+void basegetregfile (int conn_fd, const char* filepath, int filesize, int *succ);
+void basegetslink (int conn_fd, const char* filepath, int filesize, int *succ);
+
+int getendheader(int conn_fd, csiebox_protocol_op header_type);
+void sendendheader(int conn_fd, csiebox_protocol_op header_type, int succ);
 
 #ifdef __cplusplus
 }

@@ -71,6 +71,7 @@ int basesendslink(int conn_fd, const char* filepath){
 	return getendheader(conn_fd, CSIEBOX_PROTOCOL_OP_SYNC_FILE);
 }
 
+
 int basesendrm	(int conn_fd, const char* filepath){
 	if (!send_message(conn_fd, (void*)filepath, strlen(filepath))) {
 		fprintf(stderr, "send fail - rm filename\n");
@@ -90,4 +91,51 @@ int getendheader(int conn_fd, csiebox_protocol_op header_type){
 		}
 	}
 	return -1;
+}
+
+void basegetregfile (int conn_fd, const char* filepath, int filesize, int *succ){
+	fprintf(stderr, "sync file %s\n", filepath);
+	FILE* writefile= fopen(filepath, "w");
+	if (writefile == NULL) {
+		fprintf(stderr, "cannot open writefile\n");
+		succ = 0;
+	}
+	char* buffer = (char*)malloc(sizeof(char)*BUFFER_SIZE);
+	if (buffer == NULL) {
+		fprintf(stderr, "cannot allocate write memory\n");
+		succ = 0;
+	}
+
+	while (succ && (filesize != 0)) {
+		if (!recv_message(conn_fd, buffer, filesize % BUFFER_SIZE)) {
+			fprintf(stderr, "Something wrong during file transfer\n");
+			succ = 0;
+			break;
+		}
+		fwrite(buffer, 1, filesize%BUFFER_SIZE, writefile);
+		filesize -= filesize%BUFFER_SIZE;
+	}
+	fclose(writefile);
+}
+
+void basegetslink(int conn_fd, const char* filepath, int filesize, int *succ){
+	char* buffer = (char*)malloc(sizeof(char)*filesize);
+	if (!recv_message(conn_fd, buffer, filesize)) {
+		fprintf(stderr, "cannot get slink file content\n");
+		succ = 0;
+	}
+	buffer[filesize] = '\0';
+	fprintf(stderr, "sync symbolic link %s point to %s\n", filepath, buffer);
+	symlink(buffer, filepath);
+}
+
+//return protocol
+void sendendheader(int conn_fd, csiebox_protocol_op header_type, int succ){
+	csiebox_protocol_header header;
+	memset(&header, 0, sizeof(header));
+	header.res.magic = CSIEBOX_PROTOCOL_MAGIC_RES;
+	header.res.op = header_type;
+	header.res.datalen = 0;
+	header.res.status = (succ)? CSIEBOX_PROTOCOL_STATUS_OK: CSIEBOX_PROTOCOL_STATUS_FAIL;
+	send_message(conn_fd, &header, sizeof(header));
 }

@@ -1,6 +1,6 @@
 #include "csiebox_server.h"
-
 #include "csiebox_common.h"
+#include "csiebox_sendget.h"
 #include "connect.h"
 
 #include <stdio.h>
@@ -408,12 +408,7 @@ synctime(csiebox_server* server, int conn_fd){
 	fprintf(stderr, "Get offset %ld\n", offset);
 	
 	//return OK to client, prevent sync again
-	csiebox_protocol_header header;
-	memset(&header, 0, sizeof(header));
-	header.res.magic = CSIEBOX_PROTOCOL_MAGIC_RES;
-	header.res.op = CSIEBOX_PROTOCOL_OP_SYNC_TIME;
-	header.res.status = CSIEBOX_PROTOCOL_STATUS_OK;
-	send_message(conn_fd, &header, sizeof(header));
+	sendendheader(conn_fd, CSIEBOX_PROTOCOL_OP_SYNC_TIME, 1);
 }
 
 static void logout(csiebox_server* server, int conn_fd) {
@@ -509,47 +504,13 @@ static void getfile(
 	//get file, here is using some dangerous mechanism
 	int succ = 1;
 	if (isSlink) {
-		fprintf(stderr, "sync symbolic link %s point to %s\n", fullpath, filepath);
-		filepath = (char*)realloc(filepath, filesize);
-		if (!recv_message(conn_fd, filepath, filesize)) {
-			fprintf(stderr, "cannot get slink file content\n");
-			succ = 0;
-		}
-		filepath[filesize] = '\0';
-		symlink(filepath, fullpath);
+		basegetslink(conn_fd, fullpath, filesize, &succ);
 	} else {
-		fprintf(stderr, "sync file %s\n", fullpath);
-		FILE* writefile= fopen(fullpath, "w");
-		if (writefile == NULL) {
-			fprintf(stderr, "cannot open writefile\n");
-			succ = 0;
-		}
-		char* buffer = (char*)malloc(sizeof(char)*BUFFER_SIZE);
-		if (buffer == NULL) {
-			fprintf(stderr, "cannot allocate write memory\n");
-			succ = 0;
-		}
-
-		while (succ && (filesize != 0)) {
-			if (!recv_message(conn_fd, buffer, filesize % BUFFER_SIZE)) {
-				fprintf(stderr, "Something wrong during file transfer\n");
-				succ = 0;
-				break;
-			}
-			fwrite(buffer, 1, filesize%BUFFER_SIZE, writefile);
-			filesize -= filesize%BUFFER_SIZE;
-		}
-		fclose(writefile);
+		basegetregfile(conn_fd, fullpath, filesize, &succ);
 	}
 	subOffset(fullpath, server->client[conn_fd]->offset);
 
-	csiebox_protocol_header header;
-	memset(&header, 0, sizeof(header));
-	header.res.magic = CSIEBOX_PROTOCOL_MAGIC_RES;
-	header.res.op = CSIEBOX_PROTOCOL_OP_SYNC_FILE;
-	header.res.datalen = 0;
-	header.res.status = (succ)? CSIEBOX_PROTOCOL_STATUS_OK: CSIEBOX_PROTOCOL_STATUS_FAIL;
-	send_message(conn_fd, &header, sizeof(header));
+	sendendheader(conn_fd, CSIEBOX_PROTOCOL_OP_SYNC_FILE, succ);
 
 	free(fullpath);
 	free(filepath);
@@ -583,15 +544,7 @@ static void gethlink(
 		subOffset(targetpath, server->client[conn_fd]->offset);
 		succ = 0;
 	}
-
-	//return protocol
-	csiebox_protocol_header header;
-	memset(&header, 0, sizeof(header));
-	header.res.magic = CSIEBOX_PROTOCOL_MAGIC_RES;
-	header.res.op = CSIEBOX_PROTOCOL_OP_SYNC_HARDLINK;
-	header.res.datalen = 0;
-	header.res.status = (succ)? CSIEBOX_PROTOCOL_STATUS_OK: CSIEBOX_PROTOCOL_STATUS_FAIL;
-	send_message(conn_fd, &header, sizeof(header));
+	sendendheader(conn_fd, CSIEBOX_PROTOCOL_OP_SYNC_HARDLINK, succ);
 
 	free(srcpath);
 	free(targetpath);
@@ -632,13 +585,7 @@ static void removefile(
 	}
 
 	//return protocol
-	csiebox_protocol_header header;
-	memset(&header, 0, sizeof(header));
-	header.res.magic = CSIEBOX_PROTOCOL_MAGIC_RES;
-	header.res.op = CSIEBOX_PROTOCOL_OP_RM;
-	header.res.datalen = 0;
-	header.res.status = (succ)? CSIEBOX_PROTOCOL_STATUS_OK: CSIEBOX_PROTOCOL_STATUS_FAIL;
-	send_message(conn_fd, &header, sizeof(header));
+	sendendheader(conn_fd, CSIEBOX_PROTOCOL_OP_RM, succ);
 
 	free(fullpath);
 	free(filepath);
