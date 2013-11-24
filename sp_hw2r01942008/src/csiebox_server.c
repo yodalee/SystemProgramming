@@ -255,10 +255,13 @@ static void handle_request(csiebox_server* server, int conn_fd) {
 				break;
 			}
 		case CSIEBOX_PROTOCOL_OP_SYNC_END:
-			fprintf(stderr, "sync end\n");
-			csiebox_protocol_header end;
-			// TODO
-			break;
+			{
+				header.res.magic = CSIEBOX_PROTOCOL_MAGIC_RES;
+				header.res.status = CSIEBOX_PROTOCOL_STATUS_OK;
+			    send_message(conn_fd, &header, sizeof(header));
+				fprintf(stderr, "client %d sync file end\n", conn_fd);
+				break;
+			}
 		case CSIEBOX_PROTOCOL_OP_RM:
 			{
 				csiebox_protocol_rm rm;

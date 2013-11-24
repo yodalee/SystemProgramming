@@ -1,5 +1,4 @@
 #include "csiebox_client.h"
-
 #include "csiebox_common.h"
 #include "connect.h"
 #include "array.h"
@@ -24,6 +23,7 @@ static int sendfile(csiebox_client *client, const char *syncfile, const struct s
 static int sendslink(csiebox_client *client, const char *syncfile);
 static int sendhlink(csiebox_client *client, fileinfo *src, fileinfo *target);
 static int rmfile(csiebox_client *client, const char *rmfile); 
+static int sendend(csiebox_client *client); 
 int treewalk(csiebox_client *client, filearray* list);
 int handlepath(char *path, filearray* list);
 int checkfile(csiebox_client *client, filearray *list, int idx);
@@ -76,6 +76,8 @@ int csiebox_client_run(csiebox_client* client) {
 	for (idx = 0; idx < list.used; ++idx) {
 		checkfile(client, &list, idx);
 	}
+
+	sendend(client);
 	
 	//start monitor modification
 	monitor(client, &list);
@@ -466,6 +468,29 @@ static int rmfile(csiebox_client *client, const char* path){
 		}
 	}
 	return -1;
+}
+
+static int 
+sendend(csiebox_client* client){
+	csiebox_protocol_header header;
+	memset(&header, 0, sizeof(header));
+	header.res.magic = CSIEBOX_PROTOCOL_MAGIC_REQ;
+	header.res.op = CSIEBOX_PROTOCOL_OP_SYNC_END;
+	header.res.client_id = client->client_id;
+	header.res.datalen = 0;
+	if (!send_message(client->conn_fd, &header, sizeof(header))) {
+		fprintf(stderr, "send fail - end protocol\n");
+		return -1;
+	}
+	memset(&header, 0, sizeof(header));
+	if (recv_message(client->conn_fd, &header, sizeof(header))) {
+		if (header.res.magic == CSIEBOX_PROTOCOL_MAGIC_RES &&
+			header.res.op == CSIEBOX_PROTOCOL_OP_SYNC_END &&
+			header.res.status == CSIEBOX_PROTOCOL_STATUS_OK) {
+			fprintf(stderr, "Sync file to server end\n");
+			return 0;
+		}
+	}
 }
 
 static int senddataend(csiebox_client* client) {
