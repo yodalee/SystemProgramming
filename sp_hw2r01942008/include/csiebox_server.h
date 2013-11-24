@@ -14,10 +14,12 @@ typedef struct {
   char passwd_hash[MD5_DIGEST_LENGTH];
 } csiebox_account_info;
 
-typedef struct {
+typedef struct client_info_struct {
   csiebox_account_info account;
   int conn_fd;
   long offset;
+  struct client_info_struct* next;
+  struct client_info_struct* prev;
 } csiebox_client_info;
 
 typedef struct {

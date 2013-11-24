@@ -332,22 +332,53 @@ static int login(
     succ = 0;
   }
 
+	csiebox_client_info* tmp;
+	if (succ) {
+		if (server->client[conn_fd]) {
+			tmp = server->client[conn_fd];
+			if (tmp->next) {
+				tmp->next->prev = tmp->prev;
+			}
+			if (tmp->prev) {
+				tmp->prev->next = tmp->next;
+			}
+			free(server->client[conn_fd]);
+		}
+		info->conn_fd = conn_fd;
+		info->next = NULL;
+		info->prev = NULL;
+		server->client[conn_fd] = info;
+		//find same client and link into
+		int i;
+		int count = 1;
+		for (i = 0; i < getdtablesize(); ++i) {
+			if (server->client[i] && i != conn_fd){ 
+				if (strncmp(info->account.user, server->client[i]->account.user, PATH_MAX) == 0) {
+					tmp = server->client[i];
+					while(tmp->next){
+						tmp = tmp->next;
+						++count;
+					}
+					info->prev = tmp;
+					tmp->next = info;
+					break;
+				}
+			}
+		}
+		printf("There are %d client link to this server\n", count);
+		char* homedir = get_user_homedir(server, info);
+		mkdir(homedir, DIR_S_FLAG);
+		free(homedir);
+	}
+  //prepare return
   csiebox_protocol_header header;
   memset(&header, 0, sizeof(header));
   header.res.magic = CSIEBOX_PROTOCOL_MAGIC_RES;
   header.res.op = CSIEBOX_PROTOCOL_OP_LOGIN;
   header.res.datalen = 0;
   if (succ) {
-    if (server->client[conn_fd]) {
-      free(server->client[conn_fd]);
-    }
-    info->conn_fd = conn_fd;
-    server->client[conn_fd] = info;
     header.res.status = CSIEBOX_PROTOCOL_STATUS_OK;
     header.res.client_id = info->conn_fd;
-    char* homedir = get_user_homedir(server, info);
-    mkdir(homedir, DIR_S_FLAG);
-    free(homedir);
   } else {
     header.res.status = CSIEBOX_PROTOCOL_STATUS_FAIL;
     free(info);
