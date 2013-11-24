@@ -7,7 +7,7 @@ GCC=gcc
 #GCC=g++
 PORT_REGISTER_OBJS=port_register.o connect.o hash.o
 CSIEBOX_SERVER_OBJS=csiebox_server_main.o csiebox_server.o connect.o csiebox_common.o
-CSIEBOX_CLIENT_OBJS=csiebox_client_main.o csiebox_client.o connect.o csiebox_common.o
+CSIEBOX_CLIENT_OBJS=csiebox_client_main.o csiebox_client.o connect.o csiebox_common.o csiebox_sendget.o
 LIB=-lm -lbsd
 .PHONY: clean
 all: $(TARGET)

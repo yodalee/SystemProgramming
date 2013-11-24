@@ -1,5 +1,6 @@
 #include "csiebox_client.h"
 #include "csiebox_common.h"
+#include "csiebox_sendget.h"
 #include "connect.h"
 #include "array.h"
 
@@ -17,12 +18,9 @@ static int login(csiebox_client *client);
 static int synctime(csiebox_client *client);
 static int monitor(csiebox_client *client, filearray *list);
 static int sendmeta(csiebox_client *client, const char *syncfile, const struct stat *statptr);
-static int senddata(csiebox_client *client, const char *syncfile, const struct stat *statptr);
-static int senddataend(csiebox_client* client);
 static int sendfile(csiebox_client *client, const char *syncfile, const struct stat *statptr);
-static int sendslink(csiebox_client *client, const char *syncfile);
 static int sendhlink(csiebox_client *client, fileinfo *src, fileinfo *target);
-static int rmfile(csiebox_client *client, const char *rmfile); 
+static int sendrmfile(csiebox_client *client, const char *rmfile); 
 static int sendend(csiebox_client *client); 
 int treewalk(csiebox_client *client, filearray* list);
 int handlepath(char *path, filearray* list);
@@ -264,7 +262,7 @@ static int monitor(csiebox_client* client, filearray* list){
 					
 					printf("delete file: %s\n", buf);
 					if ((idx = findfile(list, buf)) >= 0) {
-						rmfile(client, list->array[idx].path);
+						sendrmfile(client, list->array[idx].path);
 						delArray(list, idx);
 					}
 					free(buf);
@@ -316,7 +314,7 @@ static int sendmeta(csiebox_client* client, const char* syncfile, const struct s
 }
 
 //automatic sync data(file, slink, dir) up to server
-static int senddata(csiebox_client* client, const char* syncfile, const struct stat* statptr) {
+static int sendfile(csiebox_client* client, const char* syncfile, const struct stat* statptr) {
 	switch( sendmeta(client, syncfile, statptr) ) {
 		case(CSIEBOX_PROTOCOL_STATUS_OK):
 			printf("no need to send file\n");
@@ -350,61 +348,10 @@ static int senddata(csiebox_client* client, const char* syncfile, const struct s
 	}
 	switch(statptr->st_mode & S_IFMT){
 		case S_IFREG:
-			return sendfile(client, syncfile, statptr);
+			return basesendregfile(client->conn_fd, syncfile, statptr->st_size);
 		case S_IFLNK:
-			return sendslink(client, syncfile);
+			return basesendslink(client->conn_fd, syncfile);
 	}
-}
-
-static int sendfile(csiebox_client* client, const char* syncfile, const struct stat* statptr) {
-	FILE *readfile = fopen(syncfile, "rb");
-	if (readfile == NULL) {
-		fprintf(stderr, "cannot open file for transfer: %s\n", syncfile);
-		return -1;
-	}
-	char *buffer = (char*)malloc(sizeof(char)*BUFFER_SIZE);
-	if (buffer == NULL) {
-		fprintf(stderr, "cannot open memory for file buffer\n");
-		return -2;
-	}
-	unsigned long filesize = statptr->st_size;
-	int numr = 0;
-
-	fprintf(stderr, "start send file %s\n", syncfile);
-	while (filesize%BUFFER_SIZE > 0) {
-		if ((numr = fread(buffer, 1, filesize%BUFFER_SIZE, readfile)) != filesize%BUFFER_SIZE ) {
-			if (ferror(readfile) != 0) {
-				fprintf(stderr, "read file error: %s\n", syncfile);
-				return -1;
-			}
-		}
-		if (!send_message(client->conn_fd, buffer, numr)) {
-			fprintf(stderr, "send file fail\n");
-			return -1;
-		}
-		filesize -= numr;
-	}
-	fclose(readfile);
-	free(buffer);
-
-	return senddataend(client);
-}
-
-static int sendslink(csiebox_client* client, const char* syncfile) {
-	char *buffer = (char*)malloc(sizeof(char)*PATH_MAX);
-	if (buffer == NULL) {
-		fprintf(stderr, "cannot open memory for file buffer\n");
-		return -2;
-	}
-	int numr = readlink(syncfile, buffer, PATH_MAX);
-
-	if (!send_message(client->conn_fd, buffer, numr)) {
-		fprintf(stderr, "send file fail\n");
-		return -1;
-	}
-	free(buffer);
-
-	return senddataend(client);
 }
 
 static int sendhlink(csiebox_client* client, fileinfo* src, fileinfo* target){
@@ -420,28 +367,10 @@ static int sendhlink(csiebox_client* client, fileinfo* src, fileinfo* target){
 		fprintf(stderr, "send fail - hlink protocol\n");
 		return -1;
 	}
-	if (!send_message(client->conn_fd, (void*)src->path, strlen(src->path))) {
-		fprintf(stderr, "send fail - hlink src filename\n");
-		return -1;
-	}
-	if (!send_message(client->conn_fd, (void*)target->path, strlen(target->path))) {
-		fprintf(stderr, "send fail - hlink target filename\n");
-		return -1;
-	}
-
-	csiebox_protocol_header header;
-	memset(&header, 0, sizeof(header));
-	if (recv_message(client->conn_fd, &header, sizeof(header))) {
-		if (header.res.magic == CSIEBOX_PROTOCOL_MAGIC_RES &&
-			header.res.op == CSIEBOX_PROTOCOL_OP_SYNC_HARDLINK &&
-			header.res.status == CSIEBOX_PROTOCOL_STATUS_OK) {
-			return 0;
-		}
-	}
-	return -1;
+	basesendhlink(client->conn_fd, src->path, target->path);
 }
 
-static int rmfile(csiebox_client *client, const char* path){
+static int sendrmfile(csiebox_client *client, const char* path){
 	csiebox_protocol_rm req;
 	memset(&req, 0, sizeof(req));
 	req.message.header.req.magic = CSIEBOX_PROTOCOL_MAGIC_REQ;
@@ -453,21 +382,7 @@ static int rmfile(csiebox_client *client, const char* path){
 		fprintf(stderr, "send fail - rm protocol\n");
 		return -1;
 	}
-	if (!send_message(client->conn_fd, (void*)path, strlen(path))) {
-		fprintf(stderr, "send fail - rm filename\n");
-		return -1;
-	}
-
-	csiebox_protocol_header header;
-	memset(&header, 0, sizeof(header));
-	if (recv_message(client->conn_fd, &header, sizeof(header))) {
-		if (header.res.magic == CSIEBOX_PROTOCOL_MAGIC_RES &&
-			header.res.op == CSIEBOX_PROTOCOL_OP_RM &&
-			header.res.status == CSIEBOX_PROTOCOL_STATUS_OK) {
-			return 0;
-		}
-	}
-	return -1;
+	return basesendrm(client->conn_fd, path);
 }
 
 static int 
@@ -482,29 +397,10 @@ sendend(csiebox_client* client){
 		fprintf(stderr, "send fail - end protocol\n");
 		return -1;
 	}
-	memset(&header, 0, sizeof(header));
-	if (recv_message(client->conn_fd, &header, sizeof(header))) {
-		if (header.res.magic == CSIEBOX_PROTOCOL_MAGIC_RES &&
-			header.res.op == CSIEBOX_PROTOCOL_OP_SYNC_END &&
-			header.res.status == CSIEBOX_PROTOCOL_STATUS_OK) {
-			fprintf(stderr, "Sync file to server end\n");
-			return 0;
-		}
-	}
+	fprintf(stderr, "Sync file to server end\n");
+	return getendheader(client->conn_fd, CSIEBOX_PROTOCOL_OP_SYNC_END);
 }
 
-static int senddataend(csiebox_client* client) {
-	csiebox_protocol_header header;
-	memset(&header, 0, sizeof(header));
-	if (recv_message(client->conn_fd, &header, sizeof(header))) {
-		if (header.res.magic == CSIEBOX_PROTOCOL_MAGIC_RES &&
-			header.res.op == CSIEBOX_PROTOCOL_OP_SYNC_FILE &&
-			header.res.status == CSIEBOX_PROTOCOL_STATUS_OK) {
-			return 0;
-		}
-	}
-	return -1;
-}
 //--------------------------------------------
 // Function: treewalk
 // Description: 
@@ -609,11 +505,11 @@ handlefile(csiebox_client* client, fileinfo* info)
 	switch(info->statbuf.st_mode & S_IFMT){
 		case S_IFREG:
 			printf("get a regular file: %s\n", info->path);
-			senddata(client, info->path, &info->statbuf);
+			sendfile(client, info->path, &info->statbuf);
 			break;
 		case S_IFLNK:
 			printf("get a slink: %s\n", info->path);
-			senddata(client, info->path, &info->statbuf);
+			sendfile(client, info->path, &info->statbuf);
 			break;
 		case S_IFDIR:
 			printf("get a directory: %s\n", info->path);
