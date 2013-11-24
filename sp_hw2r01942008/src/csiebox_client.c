@@ -244,8 +244,7 @@ static int monitor(csiebox_client* client, filearray* list){
 					printf("create file/dir %s\n", ele.path);
 					checkfile(client, list, list->used-1);
 				}
-				if ((event->mask & IN_ATTRIB) ||
-				   (event->mask & IN_MODIFY)) {
+				if ((event->mask & IN_ATTRIB) || (event->mask & IN_MODIFY)) {
 					char* buf = (char*)malloc(PATH_MAX);
 					strncpy(buf, event->name, strlen(event->name));
 					buf[strlen(event->name)] = '\0';
@@ -349,11 +348,9 @@ static int senddata(csiebox_client* client, const char* syncfile, const struct s
 	}
 	switch(statptr->st_mode & S_IFMT){
 		case S_IFREG:
-			sendfile(client, syncfile, statptr);
-			break;
+			return sendfile(client, syncfile, statptr);
 		case S_IFLNK:
-			sendslink(client, syncfile);
-			break;
+			return sendslink(client, syncfile);
 	}
 }
 
@@ -371,7 +368,7 @@ static int sendfile(csiebox_client* client, const char* syncfile, const struct s
 	unsigned long filesize = statptr->st_size;
 	int numr = 0;
 
-	fprintf(stderr, "start send\n");
+	fprintf(stderr, "start send file %s\n", syncfile);
 	while (filesize%BUFFER_SIZE > 0) {
 		if ((numr = fread(buffer, 1, filesize%BUFFER_SIZE, readfile)) != filesize%BUFFER_SIZE ) {
 			if (ferror(readfile) != 0) {
@@ -554,7 +551,6 @@ findfile(filearray* list, char* filename){
 	int i = 0;
 	for (i = 0; i < list->used; ++i) {
 		if ((strncmp(list->array[i].path, filename, PATH_MAX)) == 0) {
-			printf("return value: %d\n", i);
 			return i;
 		}
 	}

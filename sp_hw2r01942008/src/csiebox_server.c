@@ -220,47 +220,53 @@ static void handle_request(csiebox_server* server, int conn_fd) {
 	}
 	switch (header.req.op) {
 		case CSIEBOX_PROTOCOL_OP_LOGIN:
-			fprintf(stderr, "login\n");
-			csiebox_protocol_login req;
-			if (complete_message_with_header(conn_fd, &header, &req)) {
-				if(login(server, conn_fd, &req) ){
-					synctime(server, conn_fd);
+			{
+				fprintf(stderr, "login\n");
+				csiebox_protocol_login req;
+				if (complete_message_with_header(conn_fd, &header, &req)) {
+					if(login(server, conn_fd, &req) ){
+						synctime(server, conn_fd);
+					}
 				}
+				break;
 			}
-			break;
 		case CSIEBOX_PROTOCOL_OP_SYNC_META:
-			fprintf(stderr, "sync meta\n");
-			csiebox_protocol_meta meta;
-			if (complete_message_with_header(conn_fd, &header, &meta)) {
-				checkmeta(server, conn_fd, &meta);
+			{
+				csiebox_protocol_meta meta;
+				if (complete_message_with_header(conn_fd, &header, &meta)) {
+					checkmeta(server, conn_fd, &meta);
+				}
+				break;
 			}
-			break;
 		case CSIEBOX_PROTOCOL_OP_SYNC_FILE:
-			fprintf(stderr, "sync file\n");
-			csiebox_protocol_file file;
-			if (complete_message_with_header(conn_fd, &header, &file)) {
-				getfile(server, conn_fd, &file);
+			{
+				csiebox_protocol_file file;
+				if (complete_message_with_header(conn_fd, &header, &file)) {
+					getfile(server, conn_fd, &file);
+				}
+				break;
 			}
-			break;
 		case CSIEBOX_PROTOCOL_OP_SYNC_HARDLINK:
-			fprintf(stderr, "sync hardlink\n");
-			csiebox_protocol_hardlink hardlink;
-			if (complete_message_with_header(conn_fd, &header, &hardlink)) {
-				gethlink(server, conn_fd, &hardlink);
+			{
+				csiebox_protocol_hardlink hardlink;
+				if (complete_message_with_header(conn_fd, &header, &hardlink)) {
+					gethlink(server, conn_fd, &hardlink);
+				}
+				break;
 			}
-			break;
 		case CSIEBOX_PROTOCOL_OP_SYNC_END:
 			fprintf(stderr, "sync end\n");
 			csiebox_protocol_header end;
 			// TODO
 			break;
 		case CSIEBOX_PROTOCOL_OP_RM:
-			fprintf(stderr, "rm\n");
-			csiebox_protocol_rm rm;
-			if (complete_message_with_header(conn_fd, &header, &rm)) {
-				removefile(server, conn_fd, &rm);
+			{
+				csiebox_protocol_rm rm;
+				if (complete_message_with_header(conn_fd, &header, &rm)) {
+					removefile(server, conn_fd, &rm);
+				}
+				break;
 			}
-			break;
 		default:
 			fprintf(stderr, "unknown op %x\n", header.req.op);
 			break;
@@ -412,6 +418,7 @@ static void checkmeta(
 	strncat(fullpath, filepath, length);
 
 	//checkmeta, if is directory, just call mkdir. file then compare hash
+	fprintf(stderr, "sync meta: %s\n", fullpath);
 	if ((meta->message.body.stat.st_mode & S_IFMT) == S_IFDIR) {
 		mkdir(fullpath, DIR_S_FLAG);
 		status = CSIEBOX_PROTOCOL_STATUS_OK;
@@ -468,6 +475,7 @@ static void getfile(
 	//get file, here is using some dangerous mechanism
 	int succ = 1;
 	if (isSlink) {
+		fprintf(stderr, "sync symbolic link %s point to %s\n", fullpath, filepath);
 		filepath = (char*)realloc(filepath, filesize);
 		if (!recv_message(conn_fd, filepath, filesize)) {
 			fprintf(stderr, "cannot get slink file content\n");
@@ -476,6 +484,7 @@ static void getfile(
 		filepath[filesize] = '\0';
 		symlink(filepath, fullpath);
 	} else {
+		fprintf(stderr, "sync file %s\n", fullpath);
 		FILE* writefile= fopen(fullpath, "w");
 		if (writefile == NULL) {
 			fprintf(stderr, "cannot open writefile\n");
@@ -534,6 +543,7 @@ static void gethlink(
 	recv_message(conn_fd, filepath, targetlen);
 	strncat(targetpath, filepath, targetlen);
 	
+	fprintf(stderr, "sync hardlink from %s point to %s\n", srcpath, targetpath);
 	//create hardlink
 	if ((link(srcpath, targetpath) != 0)) {
 		subOffset(targetpath, server->client[conn_fd]->offset);
@@ -581,7 +591,8 @@ static void removefile(
 	recv_message(conn_fd, filepath, pathlen);
 	strncat(fullpath, filepath, pathlen);
 	
-	//create hardlink
+	//unlink file
+	fprintf(stderr, "remove file %s\n", fullpath);
 	if ((unlink(fullpath) != 0)) {
 		succ = 0;
 	}
