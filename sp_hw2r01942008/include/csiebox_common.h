@@ -39,6 +39,7 @@ typedef enum {
   CSIEBOX_PROTOCOL_OP_SYNC_HARDLINK = 0x03,
   CSIEBOX_PROTOCOL_OP_SYNC_END = 0x04,
   CSIEBOX_PROTOCOL_OP_RM = 0x05,
+  CSIEBOX_PROTOCOL_OP_SYNC_TIME = 0x06,
 } csiebox_protocol_op;
 
 typedef enum {
@@ -140,6 +141,16 @@ typedef union {
   } message;
   uint8_t bytes[sizeof(csiebox_protocol_header) + 4];
 } csiebox_protocol_rm;
+
+typedef union {
+  struct {
+    csiebox_protocol_header header;
+    struct {
+		time_t t[4];
+    } body;
+  } message;
+  uint8_t bytes[sizeof(csiebox_protocol_header) + 4*sizeof(time_t)];
+} csiebox_protocol_synctime;
 
 /*
  * utility

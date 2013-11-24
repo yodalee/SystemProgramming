@@ -10,6 +10,7 @@
 #include <sys/socket.h>
 #include <sys/select.h>
 #include <time.h>
+#include <utime.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
@@ -19,8 +20,9 @@ static int parse_arg(csiebox_server* server, int argc, char** argv);
 static void handle_request(csiebox_server* server, int conn_fd);
 static int get_account_info(
   csiebox_server* server,  const char* user, csiebox_account_info* info);
-static void login(
+static int login(
   csiebox_server* server, int conn_fd, csiebox_protocol_login* login);
+static void synctime(csiebox_server* server, int conn_fd);
 static void logout(csiebox_server* server, int conn_fd);
 static char* get_user_homedir(
   csiebox_server* server, csiebox_client_info* info);
@@ -30,6 +32,7 @@ static void getfile(
 	csiebox_server* server, int conn_fd, csiebox_protocol_file* rm);
 static void gethlink(
 	csiebox_server* server, int conn_fd, csiebox_protocol_hardlink* rm);
+static void subOffset(char *filepath, long offset);
 static void removefile(
 	csiebox_server* server, int conn_fd, csiebox_protocol_rm *rm);
 
@@ -305,7 +308,7 @@ static int get_account_info(
 }
 
 //handle the login request from client
-static void login(
+static int login(
   csiebox_server* server, int conn_fd, csiebox_protocol_login* login) {
   int succ = 1;
   csiebox_client_info* info =
@@ -344,6 +347,33 @@ static void login(
     free(info);
   }
   send_message(conn_fd, &header, sizeof(header));
+}
+
+static void 
+synctime(csiebox_server* server, int conn_fd){
+	fprintf(stderr, "Sync time with client\n");
+	csiebox_protocol_synctime req;
+	memset(&req, 0, sizeof(req));
+	req.message.header.req.magic = CSIEBOX_PROTOCOL_MAGIC_REQ;
+	req.message.header.req.op = CSIEBOX_PROTOCOL_OP_SYNC_TIME;
+	req.message.body.t[0] = time(0);
+	//start sync
+	send_message(conn_fd, &req, sizeof(req));
+	recv_message(conn_fd, &req, sizeof(req));
+	req.message.body.t[3] = time(0);
+	time_t offset = (
+		req.message.body.t[1] - req.message.body.t[0] +
+		req.message.body.t[2] - req.message.body.t[3])/2;
+	server->client[conn_fd]->offset = offset;
+	fprintf(stderr, "Get offset %ld\n", offset);
+	
+	//return OK to client, prevent sync again
+	csiebox_protocol_header header;
+	memset(&header, 0, sizeof(header));
+	header.res.magic = CSIEBOX_PROTOCOL_MAGIC_RES;
+	header.res.op = CSIEBOX_PROTOCOL_OP_SYNC_TIME;
+	header.res.status = CSIEBOX_PROTOCOL_STATUS_OK;
+	send_message(conn_fd, &header, sizeof(header));
 }
 
 static void logout(csiebox_server* server, int conn_fd) {
@@ -395,10 +425,11 @@ static void checkmeta(
 			status = CSIEBOX_PROTOCOL_STATUS_MORE;
 		} else {
 			//update meta content, return ok
+			fprintf(stderr, "md5 is identical\n");
 			struct stat statbuf;
 			lstat(fullpath, &statbuf);
 			memcpy(&statbuf, &meta->message.body.stat, sizeof(struct stat));
-			fprintf(stderr, "md5 is identical\n");
+			subOffset(fullpath, server->client[conn_fd]->offset);
 			status = CSIEBOX_PROTOCOL_STATUS_OK;
 		}
 	}
@@ -467,6 +498,7 @@ static void getfile(
 		}
 		fclose(writefile);
 	}
+	subOffset(fullpath, server->client[conn_fd]->offset);
 
 	csiebox_protocol_header header;
 	memset(&header, 0, sizeof(header));
@@ -504,6 +536,7 @@ static void gethlink(
 	
 	//create hardlink
 	if ((link(srcpath, targetpath) != 0)) {
+		subOffset(targetpath, server->client[conn_fd]->offset);
 		succ = 0;
 	}
 
@@ -519,6 +552,16 @@ static void gethlink(
 	free(srcpath);
 	free(targetpath);
 	free(filepath);
+}
+
+static void
+subOffset(char *filepath, long offset){
+	struct stat statbuf;
+	struct utimbuf timebuf;
+	lstat(filepath, &statbuf);
+	timebuf.actime = statbuf.st_atime;
+	timebuf.modtime = statbuf.st_mtime - offset;
+	utime(filepath, &timebuf);
 }
 
 static void removefile(

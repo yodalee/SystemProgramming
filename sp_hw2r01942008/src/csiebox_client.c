@@ -11,9 +11,11 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <linux/inotify.h>
+#include <time.h>
 
 static int parse_arg(csiebox_client *client, int argc, char **argv);
 static int login(csiebox_client *client);
+static int synctime(csiebox_client *client);
 static int monitor(csiebox_client *client, filearray *list);
 static int sendmeta(csiebox_client *client, const char *syncfile, const struct stat *statptr);
 static int senddata(csiebox_client *client, const char *syncfile, const struct stat *statptr);
@@ -62,6 +64,8 @@ int csiebox_client_run(csiebox_client* client) {
 		return 0;
 	}
 	fprintf(stderr, "login success\n");
+	//sync time getween server and client
+	synctime(client);
 
 	//walk through client directory, generate filelist
 	filearray list;
@@ -136,7 +140,10 @@ static int parse_arg(csiebox_client* client, int argc, char** argv) {
         strncpy(client->arg.path, val, vallen);
         accept_config[4] = 1;
       }
-    }
+    } else if (strcmp("offset", key) == 0) {
+		client->arg.offset = atoi(val);
+        accept_config[5] = 1;
+      }
   }
   free(key);
   free(val);
@@ -179,6 +186,32 @@ static int login(csiebox_client* client) {
     }
   }
   return 0;
+}
+
+static int
+synctime(csiebox_client* client){
+	fprintf(stderr, "Sync time with server\n");
+	csiebox_protocol_synctime timestamp;
+	memset(&timestamp, 0, sizeof(timestamp));
+
+	if (recv_message(client->conn_fd, &timestamp, sizeof(timestamp))) {
+		if (timestamp.message.header.res.magic == CSIEBOX_PROTOCOL_MAGIC_REQ &&
+			timestamp.message.header.res.op == CSIEBOX_PROTOCOL_OP_SYNC_TIME) {
+			timestamp.message.body.t[1] = time(0) + 3600*client->arg.offset;
+			timestamp.message.body.t[2] = time(0) + 3600*client->arg.offset;
+			send_message(client->conn_fd, &timestamp, sizeof(timestamp));
+		}
+	}
+	csiebox_protocol_header header;
+	memset(&header, 0, sizeof(header));
+	if (recv_message(client->conn_fd, &header, sizeof(header))) {
+		if (header.res.magic == CSIEBOX_PROTOCOL_MAGIC_RES &&
+			header.res.op == CSIEBOX_PROTOCOL_OP_SYNC_TIME &&
+			header.res.status == CSIEBOX_PROTOCOL_STATUS_OK) {
+			return 0;
+		}
+	}
+	return 1;
 }
 
 static int monitor(csiebox_client* client, filearray* list){

@@ -17,6 +17,7 @@ typedef struct {
 typedef struct {
   csiebox_account_info account;
   int conn_fd;
+  long offset;
 } csiebox_client_info;
 
 typedef struct {

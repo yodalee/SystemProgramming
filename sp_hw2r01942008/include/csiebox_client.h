@@ -19,6 +19,7 @@ typedef struct {
     char user[USER_LEN_MAX];
     char passwd[PASSWD_LEN_MAX];
     char path[PATH_MAX];
+	int offset;
   } arg;
   int conn_fd;
   int client_id;
