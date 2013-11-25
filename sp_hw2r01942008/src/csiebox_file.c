@@ -1,4 +1,4 @@
-#include "csiebox_sendget.h"
+#include "csiebox_file.h"
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -6,6 +6,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <linux/limits.h>
+#include <utime.h>
 
 int 
 basesendregfile	(int conn_fd, const char* filepath, long filesize)
@@ -42,7 +43,7 @@ basesendregfile	(int conn_fd, const char* filepath, long filesize)
 	return getendheader(conn_fd, CSIEBOX_PROTOCOL_OP_SYNC_FILE);
 }
 
-int basesendhlink(int conn_fd, const char* src, char* target){
+int basesendhlink(int conn_fd, const char* src, const char* target){
 	if (!send_message(conn_fd, (void*)src, strlen(src))) {
 		fprintf(stderr, "send fail - hlink src filename\n");
 		return -1;
@@ -130,12 +131,31 @@ void basegetslink(int conn_fd, const char* filepath, int filesize, int *succ){
 }
 
 //return protocol
-void sendendheader(int conn_fd, csiebox_protocol_op header_type, int succ){
+void sendendheader(
+		int conn_fd,
+		csiebox_protocol_op header_type, 
+		csiebox_protocol_status status){
 	csiebox_protocol_header header;
 	memset(&header, 0, sizeof(header));
 	header.res.magic = CSIEBOX_PROTOCOL_MAGIC_RES;
 	header.res.op = header_type;
 	header.res.datalen = 0;
-	header.res.status = (succ)? CSIEBOX_PROTOCOL_STATUS_OK: CSIEBOX_PROTOCOL_STATUS_FAIL;
+	header.res.status = status;
 	send_message(conn_fd, &header, sizeof(header));
+}
+
+//subtract some offset on the 
+void subOffset(char *filepath, long offset){
+	struct stat statbuf;
+	struct utimbuf timebuf;
+	lstat(filepath, &statbuf);
+	timebuf.actime = statbuf.st_atime;
+	timebuf.modtime = statbuf.st_mtime - offset;
+	utime(filepath, &timebuf);
+}
+
+int 
+isHiddenfile(const char *filename) 
+{
+	return (filename[0] == '.') ? 1 : 0;
 }

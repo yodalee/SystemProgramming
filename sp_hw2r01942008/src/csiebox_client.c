@@ -1,6 +1,6 @@
 #include "csiebox_client.h"
 #include "csiebox_common.h"
-#include "csiebox_sendget.h"
+#include "csiebox_file.h"
 #include "connect.h"
 #include "array.h"
 
@@ -17,17 +17,22 @@ static int parse_arg(csiebox_client *client, int argc, char **argv);
 static int login(csiebox_client *client);
 static int synctime(csiebox_client *client);
 static int monitor(csiebox_client *client, filearray *list);
+
 static int sendmeta(csiebox_client *client, const char *syncfile, const struct stat *statptr);
 static int sendfile(csiebox_client *client, const char *syncfile, const struct stat *statptr);
-static int sendhlink(csiebox_client *client, fileinfo *src, fileinfo *target);
+static int sendhlink(csiebox_client *client, const char *src, const char *target);
 static int sendrmfile(csiebox_client *client, const char *rmfile); 
 static int sendend(csiebox_client *client); 
-int treewalk(csiebox_client *client, filearray* list);
-int handlepath(char *path, filearray* list);
+static void getmeta(csiebox_client* client, csiebox_protocol_meta* meta);
+static void getfile(csiebox_client* client, csiebox_protocol_file* file);
+static void gethlink(csiebox_client* client, csiebox_protocol_hardlink* hlink);
+static void getrmfile(csiebox_client* client, csiebox_protocol_rm *rm);
+
 int checkfile(csiebox_client *client, filearray *list, int idx);
 int findfile(filearray *list, char *filename);
+int treewalk(csiebox_client *client, filearray* list);
+int handlepath(char *path, filearray* list);
 int handlefile(csiebox_client *client, fileinfo* info);
-int isHiddenfile(char *filename);
 
 //read config file, and connect to server
 void csiebox_client_init(
@@ -306,7 +311,7 @@ static int sendmeta(csiebox_client* client, const char* syncfile, const struct s
 
 //automatic sync data(file, slink, dir) up to server
 static int sendfile(csiebox_client* client, const char* syncfile, const struct stat* statptr) {
-	switch( sendmeta(client, syncfile, statptr) ) {
+	switch(sendmeta(client, syncfile, statptr) ) {
 		case(CSIEBOX_PROTOCOL_STATUS_OK):
 			printf("no need to send file\n");
 			return 0;
@@ -345,20 +350,20 @@ static int sendfile(csiebox_client* client, const char* syncfile, const struct s
 	}
 }
 
-static int sendhlink(csiebox_client* client, fileinfo* src, fileinfo* target){
+static int sendhlink(csiebox_client* client, const char *src, const char *target){
 	csiebox_protocol_hardlink req;
 	memset(&req, 0, sizeof(req));
 	req.message.header.req.magic = CSIEBOX_PROTOCOL_MAGIC_REQ;
 	req.message.header.req.op = CSIEBOX_PROTOCOL_OP_SYNC_HARDLINK;
 	req.message.header.req.client_id = client->client_id;
 	req.message.header.req.datalen = sizeof(req) - sizeof(req.message.header);
-	req.message.body.srclen = strlen(src->path);
-	req.message.body.targetlen = strlen(target->path);
+	req.message.body.srclen = strlen(src);
+	req.message.body.targetlen = strlen(target);
 	if (!send_message(client->conn_fd, &req, sizeof(req))) {
 		fprintf(stderr, "send fail - hlink protocol\n");
 		return -1;
 	}
-	basesendhlink(client->conn_fd, src->path, target->path);
+	basesendhlink(client->conn_fd, src, target);
 }
 
 static int sendrmfile(csiebox_client *client, const char* path){
@@ -390,6 +395,143 @@ sendend(csiebox_client* client){
 	}
 	fprintf(stderr, "Sync file to server end\n");
 	return getendheader(client->conn_fd, CSIEBOX_PROTOCOL_OP_SYNC_END);
+}
+
+//handle the send meta request, mkdir if the meta is a directory
+//return STATUS_OK if no need to sendfile
+//return STATUS_FAIL if something wrong
+//return STATUS_MORE if need sendfile
+static void getmeta(
+		csiebox_client* client, csiebox_protocol_meta* meta){
+	int status = 1;
+	int length = meta->message.body.pathlen;
+
+	//get home directory from client
+	char* fullpath = (char*)malloc(sizeof(char) * PATH_MAX);
+	memset(fullpath, 0, PATH_MAX);
+	strncpy(fullpath, client->arg.path, PATH_MAX);
+	char* filepath = (char*)malloc(length);
+	recv_message(client->conn_fd, filepath, length);
+	strncat(fullpath, filepath, length);
+
+	//checkmeta, if is directory, just call mkdir. file then compare hash
+	fprintf(stderr, "sync meta: %s\n", fullpath);
+	if ((meta->message.body.stat.st_mode & S_IFMT) == S_IFDIR) {
+		mkdir(fullpath, DIR_S_FLAG);
+		status = CSIEBOX_PROTOCOL_STATUS_OK;
+	} else {
+		uint8_t filehash[MD5_DIGEST_LENGTH];
+		md5_file(fullpath, filehash);
+		if (memcmp(meta->message.body.hash,
+			filehash, MD5_DIGEST_LENGTH) != 0) {
+			//return more
+			fprintf(stderr, "md5 is different\n");
+			status = CSIEBOX_PROTOCOL_STATUS_MORE;
+		} else {
+			//update meta content, return ok
+			fprintf(stderr, "md5 is identical\n");
+			struct stat statbuf;
+			lstat(fullpath, &statbuf);
+			memcpy(&statbuf, &meta->message.body.stat, sizeof(struct stat));
+			status = CSIEBOX_PROTOCOL_STATUS_OK;
+		}
+	}
+
+	sendendheader(client->conn_fd, CSIEBOX_PROTOCOL_OP_SYNC_META, status);
+
+	free(fullpath);
+	free(filepath);
+}
+
+static void getfile(
+		csiebox_client* client, csiebox_protocol_file* file){
+	unsigned long filesize = file->message.body.datalen;
+	int length = file->message.body.pathlen;
+	int isSlink = file->message.body.isSlink;
+
+	//get home directory from client
+	char* fullpath = (char*)malloc(sizeof(char) * PATH_MAX);
+	memset(fullpath, 0, PATH_MAX);
+	strncpy(fullpath, client->arg.path, PATH_MAX);
+	char* filepath = (char*)malloc(length);
+	recv_message(client->conn_fd, filepath, length);
+	strncat(fullpath, filepath, length);
+
+	//get file, here is using some dangerous mechanism
+	int succ = 1;
+	if (isSlink) {
+		basegetslink(client->conn_fd, fullpath, filesize, &succ);
+	} else {
+		basegetregfile(client->conn_fd, fullpath, filesize, &succ);
+	}
+
+	sendendheader(
+			client->conn_fd, CSIEBOX_PROTOCOL_OP_SYNC_FILE,
+			(succ)?CSIEBOX_PROTOCOL_STATUS_OK:CSIEBOX_PROTOCOL_STATUS_FAIL
+			);
+
+	free(fullpath);
+	free(filepath);
+}
+
+static void gethlink(
+		csiebox_client* client, csiebox_protocol_hardlink* hlink){
+	int srclen = hlink->message.body.srclen;
+	int targetlen = hlink->message.body.targetlen;
+	int succ = 1;
+	
+	//get file fullpath
+	char* srcpath = (char*)malloc(sizeof(char) * PATH_MAX);
+	memset(srcpath, 0, PATH_MAX);
+	strncpy(srcpath, client->arg.path, PATH_MAX);
+	char* targetpath = (char*)malloc(sizeof(char) * PATH_MAX);
+	memset(targetpath, 0, PATH_MAX);
+	strncpy(targetpath, client->arg.path, PATH_MAX);
+	char* filepath = (char*)malloc(PATH_MAX);
+	recv_message(client->conn_fd, filepath, srclen);
+	strncat(srcpath, filepath, srclen);
+	recv_message(client->conn_fd, filepath, targetlen);
+	strncat(targetpath, filepath, targetlen);
+	
+	fprintf(stderr, "sync hardlink from %s point to %s\n", srcpath, targetpath);
+	//create hardlink
+	if ((link(srcpath, targetpath) != 0)) {
+		succ = 0;
+	}
+	sendendheader( client->conn_fd, CSIEBOX_PROTOCOL_OP_SYNC_HARDLINK,
+		(succ)?CSIEBOX_PROTOCOL_STATUS_OK:CSIEBOX_PROTOCOL_STATUS_FAIL);
+
+	free(srcpath);
+	free(targetpath);
+	free(filepath);
+}
+
+static void getrmfile(
+		csiebox_client* client, csiebox_protocol_rm *rm){
+	int pathlen = rm->message.body.pathlen;
+	int succ = 1;
+	
+	//get home directory from client
+	char* fullpath = (char*)malloc(sizeof(char) * PATH_MAX);
+	memset(fullpath, 0, PATH_MAX);
+	strncpy(fullpath, client->arg.path, PATH_MAX);
+	char* filepath = (char*)malloc(PATH_MAX);
+	recv_message(client->conn_fd, filepath, pathlen);
+	strncat(fullpath, filepath, pathlen);
+	
+	//unlink file
+	fprintf(stderr, "remove file %s\n", fullpath);
+	if ((unlink(fullpath) != 0)) {
+		succ = 0;
+	}
+
+	//return protocol
+	sendendheader( client->conn_fd, CSIEBOX_PROTOCOL_OP_RM,
+		(succ)?CSIEBOX_PROTOCOL_STATUS_OK:CSIEBOX_PROTOCOL_STATUS_FAIL
+		);
+
+	free(fullpath);
+	free(filepath);
 }
 
 //--------------------------------------------
@@ -481,7 +623,7 @@ checkfile(csiebox_client* client, filearray* list, int idx){
 			if (target->statbuf.st_ino == list->array[i].statbuf.st_ino &&
 			   (target->statbuf.st_dev == list->array[i].statbuf.st_dev)) {
 				printf("get a hard link from %s to %s\n", target->path, list->array[i].path);
-				sendhlink(client, &list->array[i], target);
+				sendhlink(client, list->array[i].path, target->path);
 				return 0;
 			}
 		}
@@ -512,10 +654,4 @@ handlefile(csiebox_client* client, fileinfo* info)
 			return -1;
 	}
 	return 0;
-}
-
-int 
-isHiddenfile(char *filename) 
-{
-	return (filename[0] == '.') ? 1 : 0;
 }

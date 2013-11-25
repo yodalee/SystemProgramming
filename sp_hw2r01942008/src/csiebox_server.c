@@ -1,6 +1,6 @@
 #include "csiebox_server.h"
 #include "csiebox_common.h"
-#include "csiebox_sendget.h"
+#include "csiebox_file.h"
 #include "connect.h"
 
 #include <stdio.h>
@@ -26,15 +26,21 @@ static void synctime(csiebox_server* server, int conn_fd);
 static void logout(csiebox_server* server, int conn_fd);
 static char* get_user_homedir(
   csiebox_server* server, csiebox_client_info* info);
-static void checkmeta(
-	csiebox_server* server, int conn_fd, csiebox_protocol_meta* rm);
+
+static void getmeta(
+	csiebox_server* server, int conn_fd, csiebox_protocol_meta* meta);
 static void getfile(
-	csiebox_server* server, int conn_fd, csiebox_protocol_file* rm);
+	csiebox_server* server, int conn_fd, csiebox_protocol_file* file);
 static void gethlink(
-	csiebox_server* server, int conn_fd, csiebox_protocol_hardlink* rm);
-static void subOffset(char *filepath, long offset);
-static void removefile(
+	csiebox_server* server, int conn_fd, csiebox_protocol_hardlink* hlink);
+static void getrmfile(
 	csiebox_server* server, int conn_fd, csiebox_protocol_rm *rm);
+
+static int sendmeta(int conn_fd, const char *syncfile, const struct stat *statptr);
+static int sendfile(int conn_fd, const char *syncfile, const struct stat *statptr);
+static int sendhlink(int conn_fd, const char *src, const char *target);
+static int sendrmfile(int conn_fd, const char *rmfile); 
+static int sendend(int conn_fd); 
 
 //read config file, and start to listen
 void csiebox_server_init(
@@ -86,7 +92,7 @@ int csiebox_server_run(csiebox_server* server) {
 
 	fd_set readset;
 	struct timeval tv;
-	
+
 	while (1) {
 		//wait forever, until any descriptor return
 		FD_ZERO(&readset);
@@ -234,7 +240,7 @@ static void handle_request(csiebox_server* server, int conn_fd) {
 			{
 				csiebox_protocol_meta meta;
 				if (complete_message_with_header(conn_fd, &header, &meta)) {
-					checkmeta(server, conn_fd, &meta);
+					getmeta(server, conn_fd, &meta);
 				}
 				break;
 			}
@@ -266,7 +272,7 @@ static void handle_request(csiebox_server* server, int conn_fd) {
 			{
 				csiebox_protocol_rm rm;
 				if (complete_message_with_header(conn_fd, &header, &rm)) {
-					removefile(server, conn_fd, &rm);
+					getrmfile(server, conn_fd, &rm);
 				}
 				break;
 			}
@@ -408,7 +414,9 @@ synctime(csiebox_server* server, int conn_fd){
 	fprintf(stderr, "Get offset %ld\n", offset);
 	
 	//return OK to client, prevent sync again
-	sendendheader(conn_fd, CSIEBOX_PROTOCOL_OP_SYNC_TIME, 1);
+	sendendheader(conn_fd, CSIEBOX_PROTOCOL_OP_SYNC_TIME
+		, CSIEBOX_PROTOCOL_STATUS_OK);
+
 }
 
 static void logout(csiebox_server* server, int conn_fd) {
@@ -429,7 +437,7 @@ static char* get_user_homedir(
 //return STATUS_OK if no need to sendfile
 //return STATUS_FAIL if something wrong
 //return STATUS_MORE if need sendfile
-static void checkmeta(
+static void getmeta(
 		csiebox_server* server, int conn_fd, csiebox_protocol_meta* meta) {
 	//extract user info header
 	int status = 1;
@@ -470,13 +478,7 @@ static void checkmeta(
 		}
 	}
 
-	csiebox_protocol_header header;
-	memset(&header, 0, sizeof(header));
-	header.res.magic = CSIEBOX_PROTOCOL_MAGIC_RES;
-	header.res.op = CSIEBOX_PROTOCOL_OP_SYNC_META;
-	header.res.datalen = 0;
-	header.res.status = status;
-	send_message(conn_fd, &header, sizeof(header));
+	sendendheader(conn_fd, CSIEBOX_PROTOCOL_OP_SYNC_META, status);
 
 	free(fullpath);
 	free(filepath);
@@ -510,22 +512,25 @@ static void getfile(
 	}
 	subOffset(fullpath, server->client[conn_fd]->offset);
 
-	sendendheader(conn_fd, CSIEBOX_PROTOCOL_OP_SYNC_FILE, succ);
+	sendendheader(
+			conn_fd, CSIEBOX_PROTOCOL_OP_SYNC_FILE,
+			(succ)?CSIEBOX_PROTOCOL_STATUS_OK:CSIEBOX_PROTOCOL_STATUS_FAIL
+			);
 
 	free(fullpath);
 	free(filepath);
 }
 
 static void gethlink(
-	csiebox_server* server, int conn_fd, csiebox_protocol_hardlink* file) {
+	csiebox_server* server, int conn_fd, csiebox_protocol_hardlink* hlink) {
 	//extract user info header
 	csiebox_client_info* info =
 	  (csiebox_client_info*)malloc(sizeof(csiebox_client_info));
 	memset(info, 0, sizeof(csiebox_client_info));
 	
-	int client_id = file->message.header.req.client_id;
-	int srclen = file->message.body.srclen;
-	int targetlen = file->message.body.targetlen;
+	int client_id = hlink->message.header.req.client_id;
+	int srclen = hlink->message.body.srclen;
+	int targetlen = hlink->message.body.targetlen;
 	int succ = 1;
 	
 	//get file fullpath
@@ -544,24 +549,15 @@ static void gethlink(
 		subOffset(targetpath, server->client[conn_fd]->offset);
 		succ = 0;
 	}
-	sendendheader(conn_fd, CSIEBOX_PROTOCOL_OP_SYNC_HARDLINK, succ);
+	sendendheader( conn_fd, CSIEBOX_PROTOCOL_OP_SYNC_HARDLINK,
+		(succ)?CSIEBOX_PROTOCOL_STATUS_OK:CSIEBOX_PROTOCOL_STATUS_FAIL);
 
 	free(srcpath);
 	free(targetpath);
 	free(filepath);
 }
 
-static void
-subOffset(char *filepath, long offset){
-	struct stat statbuf;
-	struct utimbuf timebuf;
-	lstat(filepath, &statbuf);
-	timebuf.actime = statbuf.st_atime;
-	timebuf.modtime = statbuf.st_mtime - offset;
-	utime(filepath, &timebuf);
-}
-
-static void removefile(
+static void getrmfile(
 	csiebox_server* server, int conn_fd, csiebox_protocol_rm *rm){
 	csiebox_client_info* info =
 	  (csiebox_client_info*)malloc(sizeof(csiebox_client_info));
@@ -585,8 +581,125 @@ static void removefile(
 	}
 
 	//return protocol
-	sendendheader(conn_fd, CSIEBOX_PROTOCOL_OP_RM, succ);
+	sendendheader( conn_fd, CSIEBOX_PROTOCOL_OP_RM,
+		(succ)?CSIEBOX_PROTOCOL_STATUS_OK:CSIEBOX_PROTOCOL_STATUS_FAIL
+		);
 
 	free(fullpath);
 	free(filepath);
+}
+
+static int sendmeta(int conn_fd, const char* syncfile, const struct stat* statptr) {
+	//prepare protocol meta content
+	csiebox_protocol_meta req;
+	memset(&req, 0, sizeof(req));
+	req.message.header.req.magic = CSIEBOX_PROTOCOL_MAGIC_REQ;
+	req.message.header.req.op = CSIEBOX_PROTOCOL_OP_SYNC_META;
+	req.message.header.req.datalen = sizeof(req) - sizeof(req.message.header);
+	req.message.body.pathlen = strlen(syncfile);
+	memcpy(&req.message.body.stat, statptr, sizeof(struct stat));
+	if ((statptr->st_mode & S_IFMT) != S_IFDIR) {
+		md5_file(syncfile, req.message.body.hash);
+	}
+
+	//send content
+	if (!send_message(conn_fd, &req, sizeof(req))) {
+		fprintf(stderr, "send fail - meta protocol\n");
+		return -1;
+	}
+	if (!send_message(conn_fd, (void*)syncfile, strlen(syncfile))) {
+		fprintf(stderr, "send fail - meta filename\n");
+		return -1;
+	}
+
+	csiebox_protocol_header header;
+	memset(&header, 0, sizeof(header));
+	if (recv_message(conn_fd, &header, sizeof(header))) {
+		if (header.res.magic == CSIEBOX_PROTOCOL_MAGIC_RES &&
+			header.res.op == CSIEBOX_PROTOCOL_OP_SYNC_META) {
+			return header.res.status;
+		}
+	}
+	return -1;
+}
+
+static int sendfile(int conn_fd, const char *syncfile, const struct stat *statptr){
+	switch( sendmeta(conn_fd, syncfile, statptr) ) {
+		case(CSIEBOX_PROTOCOL_STATUS_OK):
+			printf("no need to send file\n");
+			return 0;
+		case(CSIEBOX_PROTOCOL_STATUS_FAIL):
+			printf("there is something wrong on client\n");
+			return -1;
+		case(CSIEBOX_PROTOCOL_STATUS_MORE):
+			printf("Start transfer file %s\n", syncfile);
+			break;
+		case -1:
+			fprintf(stderr, "something wrong transfering %s\n", syncfile);
+			return -1;
+	}
+	csiebox_protocol_file req;
+	memset(&req, 0, sizeof(req));
+	req.message.header.req.magic = CSIEBOX_PROTOCOL_MAGIC_REQ;
+	req.message.header.req.op = CSIEBOX_PROTOCOL_OP_SYNC_FILE;
+	req.message.header.req.datalen = sizeof(req) - sizeof(req.message.header);
+	req.message.body.datalen = statptr->st_size;
+	req.message.body.pathlen = strlen(syncfile);
+	req.message.body.isSlink = ((statptr->st_mode & S_IFMT) == S_IFLNK)? 1:0;
+	if (!send_message(conn_fd, &req, sizeof(req))) {
+		fprintf(stderr, "send fail - file protocol\n");
+		return -1;
+	}
+	if (!send_message(conn_fd, (void*)syncfile, strlen(syncfile))) {
+		fprintf(stderr, "send fail - file filename\n");
+		return -1;
+	}
+	switch(statptr->st_mode & S_IFMT){
+		case S_IFREG:
+			return basesendregfile(conn_fd, syncfile, statptr->st_size);
+		case S_IFLNK:
+			return basesendslink(conn_fd, syncfile);
+	}
+}
+
+static int sendhlink(int conn_fd, const char *src, const char *target){
+	csiebox_protocol_hardlink req;
+	memset(&req, 0, sizeof(req));
+	req.message.header.req.magic = CSIEBOX_PROTOCOL_MAGIC_REQ;
+	req.message.header.req.op = CSIEBOX_PROTOCOL_OP_SYNC_HARDLINK;
+	req.message.header.req.datalen = sizeof(req) - sizeof(req.message.header);
+	req.message.body.srclen = strlen(src);
+	req.message.body.targetlen = strlen(target);
+	if (!send_message(conn_fd, &req, sizeof(req))) {
+		fprintf(stderr, "send fail - hlink protocol\n");
+		return -1;
+	}
+	basesendhlink(conn_fd, src, target);
+}
+
+static int sendrmfile(int conn_fd, const char *rmfile){ 
+	csiebox_protocol_rm req;
+	memset(&req, 0, sizeof(req));
+	req.message.header.req.magic = CSIEBOX_PROTOCOL_MAGIC_REQ;
+	req.message.header.req.op = CSIEBOX_PROTOCOL_OP_RM;
+	req.message.header.req.datalen = sizeof(req) - sizeof(req.message.header);
+	req.message.body.pathlen = strlen(rmfile);
+	if (!send_message(conn_fd, &req, sizeof(req))) {
+		fprintf(stderr, "send fail - rm protocol\n");
+		return -1;
+	}
+	return basesendrm(conn_fd, rmfile);
+}
+static int sendend(int conn_fd){ 
+	csiebox_protocol_header header;
+	memset(&header, 0, sizeof(header));
+	header.res.magic = CSIEBOX_PROTOCOL_MAGIC_REQ;
+	header.res.op = CSIEBOX_PROTOCOL_OP_SYNC_END;
+	header.res.datalen = 0;
+	if (!send_message(conn_fd, &header, sizeof(header))) {
+		fprintf(stderr, "send fail - end protocol\n");
+		return -1;
+	}
+	fprintf(stderr, "Sync file to client end\n");
+	return getendheader(conn_fd, CSIEBOX_PROTOCOL_OP_SYNC_END);
 }
