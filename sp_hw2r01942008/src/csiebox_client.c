@@ -24,6 +24,7 @@ static int sendfile(csiebox_client *client, const char *syncfile, const struct s
 static int sendhlink(csiebox_client *client, const char *src, const char *target);
 static int sendrmfile(csiebox_client *client, const char *rmfile); 
 static int sendend(csiebox_client *client); 
+static void handle_request(csiebox_client *client);
 static void getmeta(csiebox_client* client, csiebox_protocol_meta* meta);
 static void getfile(csiebox_client* client, csiebox_protocol_file* file);
 static void gethlink(csiebox_client* client, csiebox_protocol_hardlink* hlink);
@@ -145,6 +146,9 @@ static int parse_arg(csiebox_client* client, int argc, char** argv) {
     } else if (strcmp("path", key) == 0) {
       if (vallen <= sizeof(client->arg.path)) {
         strncpy(client->arg.path, val, vallen);
+		if (client->arg.path[vallen] != '/') {
+			client->arg.path[vallen] = '/';
+		}
         accept_config[4] = 1;
       }
     } else if (strcmp("offset", key) == 0) {
@@ -251,6 +255,7 @@ static int monitor(csiebox_client* client, filearray* list){
 		}
 
 		if (FD_ISSET(client->conn_fd, &readset)) {
+			handle_request(client);
 		}
 		if (FD_ISSET(fd, &readset)) {
 			length = read(fd, buffer, EVENT_BUF_LEN);
@@ -428,6 +433,44 @@ sendend(csiebox_client* client){
 	}
 	fprintf(stderr, "Sync file to server end\n");
 	return getendheader(client->conn_fd, CSIEBOX_PROTOCOL_OP_SYNC_END);
+}
+
+static void handle_request(csiebox_client *client){
+	csiebox_protocol_header header;
+	memset(&header, 0, sizeof(header));
+	recv_message(client->conn_fd, &header, sizeof(header));
+	if (header.req.magic != CSIEBOX_PROTOCOL_MAGIC_REQ) {
+		return;
+	}
+	switch (header.req.op) {
+		case CSIEBOX_PROTOCOL_OP_SYNC_META:
+		{
+			csiebox_protocol_meta meta;
+			if (complete_message_with_header(client->conn_fd, &header, &meta)) {
+				getmeta(client, &meta);
+			}
+			break;
+		}
+		case CSIEBOX_PROTOCOL_OP_SYNC_FILE:
+		{
+			csiebox_protocol_file file;
+			if (complete_message_with_header(client->conn_fd, &header, &file)) {
+				getfile(client, &file);
+			}
+			break;
+		}
+		case CSIEBOX_PROTOCOL_OP_RM:
+		{
+			csiebox_protocol_rm rm;
+			if (complete_message_with_header(client->conn_fd, &header, &rm)) {
+				getrmfile(client, &rm);
+			}
+			break;
+		}
+		default:
+			fprintf(stderr, "unknown op %x\n", header.req.op);
+			break;
+	}
 }
 
 //handle the send meta request, mkdir if the meta is a directory

@@ -36,6 +36,9 @@ static void gethlink(
 static void getrmfile(
 	csiebox_server* server, int conn_fd, csiebox_protocol_rm *rm);
 
+static void notifyupdate(csiebox_server* server, int conn_fd, char* filename);
+static void notifyremove(csiebox_server* server, int conn_fd, char* filename);
+
 static int sendmeta(int conn_fd, const char *syncfile, const struct stat *statptr);
 static int sendfile(int conn_fd, const char *syncfile, const struct stat *statptr);
 static int sendhlink(int conn_fd, const char *src, const char *target);
@@ -94,7 +97,7 @@ int csiebox_server_run(csiebox_server* server) {
 	struct timeval tv;
 
 	while (1) {
-		//wait forever, until any descriptor return
+		//set monitor dile descriptor
 		FD_ZERO(&readset);
 		FD_SET(server->listen_fd, &readset);
 		for (i = 0; i < maxlink; ++i) {
@@ -116,7 +119,7 @@ int csiebox_server_run(csiebox_server* server) {
 		// handle request from connected socket fd
 		for (i = 0; i < current_max; ++i) {
 			if (FD_ISSET(active_fd[i], &readset)) {
-				handle_request(server, conn_fd);
+				handle_request(server, active_fd[i]);
 			}
 		}
 		// A new connection
@@ -359,11 +362,12 @@ static int login(
 		server->client[conn_fd] = info;
 		//find same client and link into
 		int i;
-		int count = 1;
+		int count = 0;
 		for (i = 0; i < getdtablesize(); ++i) {
 			if (server->client[i] && i != conn_fd){ 
 				if (strncmp(info->account.user, server->client[i]->account.user, PATH_MAX) == 0) {
 					tmp = server->client[i];
+					++count;
 					while(tmp->next){
 						tmp = tmp->next;
 						++count;
@@ -450,9 +454,11 @@ static void getmeta(
 	//get home directory from client_id
 	info = server->client[client_id];
     char* fullpath = get_user_homedir(server, info);
+	chdir(fullpath);
 	char* filepath = (char*)malloc(length);
 	recv_message(conn_fd, filepath, length);
 	strncat(fullpath, filepath, length);
+	filepath[length] = '\0';
 
 	//checkmeta, if is directory, just call mkdir. file then compare hash
 	fprintf(stderr, "sync meta: %s\n", fullpath);
@@ -499,7 +505,9 @@ static void getfile(
 	info = server->client[client_id];
 
     char* fullpath = get_user_homedir(server, info);
+	chdir(fullpath);
 	char* filepath = (char*)malloc(length);
+	filepath[length] = '\0';
 	recv_message(conn_fd, filepath, length);
 	strncat(fullpath, filepath, length);
 
@@ -511,11 +519,12 @@ static void getfile(
 		basegetregfile(conn_fd, fullpath, filesize, &succ);
 	}
 	subOffset(fullpath, server->client[conn_fd]->offset);
-
 	sendendheader(
-			conn_fd, CSIEBOX_PROTOCOL_OP_SYNC_FILE,
-			(succ)?CSIEBOX_PROTOCOL_STATUS_OK:CSIEBOX_PROTOCOL_STATUS_FAIL
-			);
+		conn_fd, CSIEBOX_PROTOCOL_OP_SYNC_FILE,
+		(succ)?CSIEBOX_PROTOCOL_STATUS_OK:CSIEBOX_PROTOCOL_STATUS_FAIL
+		);
+
+	notifyupdate(server, conn_fd, filepath);
 
 	free(fullpath);
 	free(filepath);
@@ -537,11 +546,14 @@ static void gethlink(
 	info = server->client[client_id];
     char* srcpath = get_user_homedir(server, info);
     char* targetpath = get_user_homedir(server, info);
+	chdir(targetpath);
 	char* filepath = (char*)malloc(PATH_MAX);
 	recv_message(conn_fd, filepath, srclen);
 	strncat(srcpath, filepath, srclen);
+	filepath[srclen] = '\0';
 	recv_message(conn_fd, filepath, targetlen);
 	strncat(targetpath, filepath, targetlen);
+	filepath[targetlen] = '\0';
 	
 	fprintf(stderr, "sync hardlink from %s point to %s\n", srcpath, targetpath);
 	//create hardlink
@@ -551,6 +563,7 @@ static void gethlink(
 	}
 	sendendheader( conn_fd, CSIEBOX_PROTOCOL_OP_SYNC_HARDLINK,
 		(succ)?CSIEBOX_PROTOCOL_STATUS_OK:CSIEBOX_PROTOCOL_STATUS_FAIL);
+	notifyupdate(server, conn_fd, targetpath);
 
 	free(srcpath);
 	free(targetpath);
@@ -570,9 +583,11 @@ static void getrmfile(
 	//get file fullpath
 	info = server->client[client_id];
     char* fullpath = get_user_homedir(server, info);
+	chdir(fullpath);
 	char* filepath = (char*)malloc(PATH_MAX);
 	recv_message(conn_fd, filepath, pathlen);
 	strncat(fullpath, filepath, pathlen);
+	filepath[pathlen] = '\0';
 	
 	//unlink file
 	fprintf(stderr, "remove file %s\n", fullpath);
@@ -582,12 +597,62 @@ static void getrmfile(
 
 	//return protocol
 	sendendheader( conn_fd, CSIEBOX_PROTOCOL_OP_RM,
-		(succ)?CSIEBOX_PROTOCOL_STATUS_OK:CSIEBOX_PROTOCOL_STATUS_FAIL
-		);
+		(succ)?CSIEBOX_PROTOCOL_STATUS_OK:CSIEBOX_PROTOCOL_STATUS_FAIL);
+	notifyremove(server, conn_fd, filepath);
 
 	free(fullpath);
 	free(filepath);
 }
+
+static void 
+notifyupdate(csiebox_server* server, int conn_fd, char* filename)
+{
+	struct stat statbuf;
+	fprintf(stderr, "client %d upload a file, notify others\n", conn_fd);
+	csiebox_client_info* clientsrc = server->client[conn_fd];
+	csiebox_client_info* clienttarget = server->client[conn_fd];
+	if (clientsrc->prev || clientsrc->next) {
+		lstat(filename, &statbuf);
+		while (clienttarget->prev) { clienttarget = clienttarget->prev; } //go to the head of the link list
+		while(1){
+			if (clienttarget != clientsrc) {
+				fprintf(stderr, "Notify client with conn_fd %d\n", clienttarget->conn_fd);
+				sendfile(clienttarget->conn_fd, filename, &statbuf);
+			}
+			if (clienttarget->next) {
+				clienttarget = clienttarget->next; //already at the end of the list
+			} else {
+				break;
+			}
+		}
+	} else {
+		fprintf(stderr, "There are no other clients\n");
+	}
+}
+static void
+notifyremove (csiebox_server* server, int conn_fd, char* filename)
+{
+	fprintf(stderr, "client %d remove a file, notify others\n", conn_fd);
+	csiebox_client_info* clientsrc = server->client[conn_fd];
+	csiebox_client_info* clienttarget = server->client[conn_fd];
+	if (clientsrc->next || clientsrc->next) {
+		while (clienttarget->prev) { clienttarget = clienttarget->prev; } //go to the head of the link list
+		while(1){
+			if (clienttarget != clientsrc) {
+				fprintf(stderr, "Notify client with conn_fd %d\n", clienttarget->conn_fd);
+				sendrmfile(clienttarget->conn_fd, filename);
+			}
+			if (clienttarget->next) {
+				clienttarget = clienttarget->next; //already at the end of the list
+			} else {
+				break;
+			}
+		}
+	} else {
+		fprintf(stderr, "There are no other clients\n");
+	}
+}
+
 
 static int sendmeta(int conn_fd, const char* syncfile, const struct stat* statptr) {
 	//prepare protocol meta content
@@ -624,7 +689,7 @@ static int sendmeta(int conn_fd, const char* syncfile, const struct stat* statpt
 }
 
 static int sendfile(int conn_fd, const char *syncfile, const struct stat *statptr){
-	switch( sendmeta(conn_fd, syncfile, statptr) ) {
+	switch(sendmeta(conn_fd, syncfile, statptr) ) {
 		case(CSIEBOX_PROTOCOL_STATUS_OK):
 			printf("no need to send file\n");
 			return 0;
