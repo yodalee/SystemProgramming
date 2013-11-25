@@ -9,6 +9,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/select.h>
+#include <dirent.h>
 #include <time.h>
 #include <utime.h>
 #include <netinet/in.h>
@@ -38,6 +39,9 @@ static void getrmfile(
 
 static void notifyupdate(csiebox_server* server, int conn_fd, char* filename);
 static void notifyremove(csiebox_server* server, int conn_fd, char* filename);
+static void notifytree(csiebox_server* server, int conn_fd);
+int treewalk(int conn_fd, char *filepath);
+int handlepath(int conn_fd, char *path);
 
 static int sendmeta(int conn_fd, const char *syncfile, const struct stat *statptr);
 static int sendfile(int conn_fd, const char *syncfile, const struct stat *statptr);
@@ -269,6 +273,7 @@ static void handle_request(csiebox_server* server, int conn_fd) {
 				header.res.status = CSIEBOX_PROTOCOL_STATUS_OK;
 			    send_message(conn_fd, &header, sizeof(header));
 				fprintf(stderr, "client %d sync file end\n", conn_fd);
+				notifytree(server, conn_fd);
 				break;
 			}
 		case CSIEBOX_PROTOCOL_OP_RM:
@@ -609,19 +614,18 @@ notifyupdate(csiebox_server* server, int conn_fd, char* filename)
 {
 	struct stat statbuf;
 	fprintf(stderr, "client %d upload a file, notify others\n", conn_fd);
-	csiebox_client_info* clientsrc = server->client[conn_fd];
-	csiebox_client_info* clienttarget = server->client[conn_fd];
-	if (clientsrc->prev || clientsrc->next) {
+	csiebox_client_info* client = server->client[conn_fd];
+	if (client->prev || client->next) {
 		lstat(filename, &statbuf);
-		while (clienttarget->prev) { clienttarget = clienttarget->prev; } //go to the head of the link list
+		while (client->prev) { client = client->prev; } //go to the head of the link list
 		while(1){
-			if (clienttarget != clientsrc) {
-				fprintf(stderr, "Notify client with conn_fd %d\n", clienttarget->conn_fd);
-				sendfile(clienttarget->conn_fd, filename, &statbuf);
+			if (client != server->client[conn_fd]) {
+				fprintf(stderr, "Notify client with conn_fd %d\n", client->conn_fd);
+				sendfile(client->conn_fd, filename, &statbuf);
 			}
-			if (clienttarget->next) {
-				clienttarget = clienttarget->next; //already at the end of the list
-			} else {
+			if (client->next) {
+				client = client->next;
+			} else { //already at the end of the list
 				break;
 			}
 		}
@@ -633,18 +637,17 @@ static void
 notifyremove (csiebox_server* server, int conn_fd, char* filename)
 {
 	fprintf(stderr, "client %d remove a file, notify others\n", conn_fd);
-	csiebox_client_info* clientsrc = server->client[conn_fd];
-	csiebox_client_info* clienttarget = server->client[conn_fd];
-	if (clientsrc->next || clientsrc->next) {
-		while (clienttarget->prev) { clienttarget = clienttarget->prev; } //go to the head of the link list
+	csiebox_client_info* client = server->client[conn_fd];
+	if (client->prev || client->next) {
+		while (client->prev) { client = client->prev; } //go to the head of the link list
 		while(1){
-			if (clienttarget != clientsrc) {
-				fprintf(stderr, "Notify client with conn_fd %d\n", clienttarget->conn_fd);
-				sendrmfile(clienttarget->conn_fd, filename);
+			if (client != server->client[conn_fd]) {
+				fprintf(stderr, "Notify client with conn_fd %d\n", client->conn_fd);
+				sendrmfile(client->conn_fd, filename);
 			}
-			if (clienttarget->next) {
-				clienttarget = clienttarget->next; //already at the end of the list
-			} else {
+			if (client->next) {
+				client->next;
+			} else { //already at the end of the list
 				break;
 			}
 		}
@@ -653,6 +656,72 @@ notifyremove (csiebox_server* server, int conn_fd, char* filename)
 	}
 }
 
+static void 
+notifytree(csiebox_server* server, int conn_fd)
+{
+	fprintf(stderr, "client %d login, check treewalk download\n", conn_fd);
+	csiebox_client_info* client = server->client[conn_fd];
+	if (client->prev || client->next) { //There is already a client link in
+		char* homedir = get_user_homedir(server, client);
+		fprintf(stderr, "Notify client with conn_fd %d\n", client->conn_fd);
+		treewalk(client->conn_fd, homedir);
+	} else {
+		fprintf(stderr, "There are no other clients\n");
+	}
+}
+
+int
+treewalk(int conn_fd, char *filepath) 
+{
+	//try to make client directory
+	if ( mkdir(filepath, DIR_S_FLAG) == -1){
+		if( EEXIST != errno ){
+			fprintf(stderr, "Error when creating client home directory\n");
+			exit(1);
+		}
+	} else {
+		printf("Create home directory at: %s\n", filepath);
+	}
+	chdir(filepath);
+	strncpy(filepath, ".", 2);
+	filepath[1] = '\0';
+	return(handlepath(conn_fd, filepath));
+}
+
+int
+handlepath(int conn_fd, char *localpath)
+{
+	struct stat		statbuf;
+	struct dirent	*direntry;
+	DIR				*dp;
+	char			*suffix;
+	
+	// check directory open permission
+	if ((dp = opendir(localpath)) == NULL) {
+		return 1;
+	}
+	//is directory walk through directory
+	suffix = localpath + strlen(localpath);
+	*suffix++='/';
+	*suffix = '\0';
+	// walk through directory entry by readdir
+	while ((direntry = readdir(dp)) != NULL) {
+		if ((strcmp(direntry->d_name, ".") == 0) || \
+			(strcmp(direntry->d_name, "..") == 0) || \
+			isHiddenfile(direntry->d_name)) 
+			continue;
+		strcpy(suffix, direntry->d_name);
+		lstat(localpath, &statbuf);
+		sendfile(conn_fd, localpath, &statbuf);
+		if (S_ISDIR(statbuf.st_mode)) {
+			// get a subdirectory, call walkdir recursive
+			handlepath(conn_fd, localpath);
+		}
+	}
+	suffix[-1] = '\0';
+	if (closedir(dp) < 0) 
+		fprintf(stderr, "can't close client directory %s", localpath);
+}
 
 static int sendmeta(int conn_fd, const char* syncfile, const struct stat* statptr) {
 	//prepare protocol meta content

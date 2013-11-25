@@ -32,7 +32,7 @@ static void getrmfile(csiebox_client* client, csiebox_protocol_rm *rm);
 
 int checkfile(csiebox_client *client, filearray *list, int idx);
 int findfile(filearray *list, char *filename);
-int treewalk(csiebox_client *client, filearray* list);
+int treewalk(char *filepath, filearray* list);
 int handlepath(char *path, filearray* list);
 int handlefile(csiebox_client *client, fileinfo* info);
 int handleevent(csiebox_client *client, struct inotify_event *event, filearray* list);
@@ -76,7 +76,10 @@ int csiebox_client_run(csiebox_client* client) {
 	//walk through client directory, generate filelist
 	filearray list;
 	initArray(&list, 10);
-	treewalk(client, &list);
+
+	char *filepath = (char*)malloc(PATH_MAX);
+	strncpy(filepath, client->arg.path, PATH_MAX);
+	treewalk(filepath, &list);
 
 	//upload file, check hardlink in the sametime
 	for (idx = 0; idx < list.used; ++idx) {
@@ -255,7 +258,10 @@ static int monitor(csiebox_client* client, filearray* list){
 		}
 
 		if (FD_ISSET(client->conn_fd, &readset)) {
+			//temporary close inotify to prevent bounce problem
+			inotify_rm_watch(fd, wd);
 			handle_request(client);
+			wd = inotify_add_watch(fd, client->arg.path, IN_CREATE | IN_DELETE | IN_ATTRIB | IN_MODIFY);
 		}
 		if (FD_ISSET(fd, &readset)) {
 			length = read(fd, buffer, EVENT_BUF_LEN);
@@ -269,7 +275,6 @@ static int monitor(csiebox_client* client, filearray* list){
 		}
 	}
 
-	//inotify_rm_watch(fd, wd);
 	close(fd);
 	return 0;
 }
@@ -617,11 +622,8 @@ static void getrmfile(
 // then chdir to client path, do treewalk
 //--------------------------------------------
 int
-treewalk(csiebox_client* client, filearray* list) 
+treewalk(char* filepath, filearray* list) 
 {
-	char *filepath = (char*)malloc(PATH_MAX);
-	strncpy(filepath, client->arg.path, PATH_MAX);
-
 	//try to make client directory
 	if ( mkdir(filepath, DIR_S_FLAG) == -1){
 		if( EEXIST != errno ){
