@@ -10,6 +10,7 @@
 #include <string.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <sys/select.h>
 #include <linux/inotify.h>
 #include <time.h>
 
@@ -33,6 +34,7 @@ int findfile(filearray *list, char *filename);
 int treewalk(csiebox_client *client, filearray* list);
 int handlepath(char *path, filearray* list);
 int handlefile(csiebox_client *client, fileinfo* info);
+int handleevent(csiebox_client *client, struct inotify_event *event, filearray* list);
 
 //read config file, and connect to server
 void csiebox_client_init(
@@ -211,10 +213,11 @@ synctime(csiebox_client* client){
 	return getendheader(client->conn_fd, CSIEBOX_PROTOCOL_OP_SYNC_TIME);
 }
 
+//monitor inotify fd and conn_fd by select
 static int monitor(csiebox_client* client, filearray* list){
-	int length, i = 0, idx = 0;
-	int fd;
-	int wd;
+	int length, i = 0;
+	int maxfd;
+	int fd, wd;
 	char buffer[EVENT_BUF_LEN];
 	memset(buffer, 0, EVENT_BUF_LEN);
 
@@ -225,52 +228,82 @@ static int monitor(csiebox_client* client, filearray* list){
 		perror("inotify_init");
 	}
 	wd = inotify_add_watch(fd, client->arg.path, IN_CREATE | IN_DELETE | IN_ATTRIB | IN_MODIFY);
+	fd_set readset;
+	struct timeval tv;
+	maxfd = (client->conn_fd > fd)? client->conn_fd : fd;
 
-	fprintf(stderr, "Start monitor directory: %s\n", client->arg.path);
-	while ((length = read(fd, buffer, EVENT_BUF_LEN)) > 0) {
-		i = 0;
-		while (i < length) {
-			struct inotify_event* event = (struct inotify_event*)&buffer[i];
-			if (!isHiddenfile(event->name)) {
-				if (event->mask & IN_CREATE) {
-					fileinfo ele;
-					strncpy(ele.path, event->name, strlen(event->name));
-					ele.path[strlen(event->name)] = '\0';
-					insertArray(list, ele);
-					printf("create file/dir %s\n", ele.path);
-					checkfile(client, list, list->used-1);
-				}
-				if ((event->mask & IN_ATTRIB) || (event->mask & IN_MODIFY)) {
-					char* buf = (char*)malloc(PATH_MAX);
-					strncpy(buf, event->name, strlen(event->name));
-					buf[strlen(event->name)] = '\0';
-					
-					printf("modify attrib/content of file: %s\n", buf);
-					if ((idx = findfile(list, buf)) >= 0) {
-						checkfile(client, list, idx);
-					}
-					free(buf);
-				}
-				if (event->mask & IN_DELETE) {
-					char* buf = (char*)malloc(PATH_MAX);
-					strncpy(buf, event->name, strlen(event->name));
-					buf[strlen(event->name)] = '\0';
-					
-					printf("delete file: %s\n", buf);
-					if ((idx = findfile(list, buf)) >= 0) {
-						sendrmfile(client, list->array[idx].path);
-						delArray(list, idx);
-					}
-					free(buf);
-				}
-			}
-			i += EVENT_SIZE + event->len;
+	fprintf(stderr, "Start monitor directory: %s and communicate descriptor %d\n", client->arg.path, client->conn_fd);
+
+	while(1)
+	{
+		FD_ZERO(&readset);
+		FD_SET(client->conn_fd, &readset);
+		FD_SET(fd, &readset);
+		//reset waiting time
+		tv.tv_sec = 5;
+		tv.tv_usec = 0;
+		switch (select(maxfd+1, &readset, NULL, NULL, &tv)) {
+			case -1:
+				fprintf(stderr, "select error\n");
+				return 1;
+			case 0:
+				continue;
 		}
-		memset(buffer, 0, EVENT_BUF_LEN);
+
+		if (FD_ISSET(client->conn_fd, &readset)) {
+		}
+		if (FD_ISSET(fd, &readset)) {
+			length = read(fd, buffer, EVENT_BUF_LEN);
+			i = 0;
+			while (i < length) {
+				struct inotify_event* event = (struct inotify_event*)&buffer[i];
+				handleevent(client, event, list);
+				i += EVENT_SIZE + event->len;
+			}
+			memset(buffer, 0, EVENT_BUF_LEN);
+		}
 	}
+
 	//inotify_rm_watch(fd, wd);
 	close(fd);
 	return 0;
+}
+
+int handleevent(csiebox_client *client, struct inotify_event *event, filearray* list){
+	int idx = 0;
+	if (!isHiddenfile(event->name)) {
+		if (event->mask & IN_CREATE) {
+			fileinfo ele;
+			strncpy(ele.path, event->name, strlen(event->name));
+			ele.path[strlen(event->name)] = '\0';
+			insertArray(list, ele);
+			printf("create file/dir %s\n", ele.path);
+			checkfile(client, list, list->used-1);
+		}
+		if ((event->mask & IN_ATTRIB) || (event->mask & IN_MODIFY)) {
+			char* buf = (char*)malloc(PATH_MAX);
+			strncpy(buf, event->name, strlen(event->name));
+			buf[strlen(event->name)] = '\0';
+			
+			printf("modify attrib/content of file: %s\n", buf);
+			if ((idx = findfile(list, buf)) >= 0) {
+				checkfile(client, list, idx);
+			}
+			free(buf);
+		}
+		if (event->mask & IN_DELETE) {
+			char* buf = (char*)malloc(PATH_MAX);
+			strncpy(buf, event->name, strlen(event->name));
+			buf[strlen(event->name)] = '\0';
+			
+			printf("delete file: %s\n", buf);
+			if ((idx = findfile(list, buf)) >= 0) {
+				sendrmfile(client, list->array[idx].path);
+				delArray(list, idx);
+			}
+			free(buf);
+		}
+	}
 }
 
 //sendmeta return whether file need update, or send directory path to server
