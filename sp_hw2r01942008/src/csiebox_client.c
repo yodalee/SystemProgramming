@@ -537,6 +537,8 @@ static void getfile(
 	char* filepath = (char*)malloc(length);
 	recv_message(client->conn_fd, filepath, length);
 	strncat(fullpath, filepath, length);
+	long offset;
+	recv_message(client->conn_fd, &offset, sizeof(long));
 
 	//get file, here is using some dangerous mechanism
 	int succ = 1;
@@ -545,11 +547,12 @@ static void getfile(
 	} else {
 		basegetregfile(client->conn_fd, fullpath, filesize, &succ);
 	}
+	subOffset(fullpath, offset);
 
 	sendendheader(
-			client->conn_fd, CSIEBOX_PROTOCOL_OP_SYNC_FILE,
-			(succ)?CSIEBOX_PROTOCOL_STATUS_OK:CSIEBOX_PROTOCOL_STATUS_FAIL
-			);
+		client->conn_fd, CSIEBOX_PROTOCOL_OP_SYNC_FILE,
+		(succ)?CSIEBOX_PROTOCOL_STATUS_OK:CSIEBOX_PROTOCOL_STATUS_FAIL
+		);
 
 	free(fullpath);
 	free(filepath);

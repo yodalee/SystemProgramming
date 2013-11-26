@@ -5,17 +5,16 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include <errno.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/select.h>
 #include <dirent.h>
 #include <time.h>
-#include <utime.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
-#include <stdlib.h>
 
 static int parse_arg(csiebox_server* server, int argc, char** argv);
 static void handle_request(csiebox_server* server, int conn_fd);
@@ -40,12 +39,11 @@ static void getrmfile(
 static void notifyupdate(csiebox_server* server, int conn_fd, char* filename);
 static void notifyremove(csiebox_server* server, int conn_fd, char* filename);
 static void notifytree(csiebox_server* server, int conn_fd);
-int treewalk(int conn_fd, char *filepath);
-int handlepath(int conn_fd, char *path);
+int treewalk(csiebox_client_info* client, char *filepath);
+int handlepath(csiebox_client_info* client, char *path);
 
 static int sendmeta(int conn_fd, const char *syncfile, const struct stat *statptr);
-static int sendfile(int conn_fd, const char *syncfile, const struct stat *statptr);
-static int sendhlink(int conn_fd, const char *src, const char *target);
+static int sendfile(csiebox_client_info* client, const char *syncfile, const struct stat *statptr);
 static int sendrmfile(int conn_fd, const char *rmfile); 
 static int sendend(int conn_fd); 
 
@@ -460,7 +458,7 @@ static void getmeta(
 	info = server->client[client_id];
     char* fullpath = get_user_homedir(server, info);
 	chdir(fullpath);
-	char* filepath = (char*)malloc(length);
+	char* filepath = (char*)malloc(length+1);
 	recv_message(conn_fd, filepath, length);
 	strncat(fullpath, filepath, length);
 	filepath[length] = '\0';
@@ -511,7 +509,7 @@ static void getfile(
 
     char* fullpath = get_user_homedir(server, info);
 	chdir(fullpath);
-	char* filepath = (char*)malloc(length);
+	char* filepath = (char*)malloc(length+1);
 	filepath[length] = '\0';
 	recv_message(conn_fd, filepath, length);
 	strncat(fullpath, filepath, length);
@@ -621,7 +619,7 @@ notifyupdate(csiebox_server* server, int conn_fd, char* filename)
 		while(1){
 			if (client != server->client[conn_fd]) {
 				fprintf(stderr, "Notify client with conn_fd %d\n", client->conn_fd);
-				sendfile(client->conn_fd, filename, &statbuf);
+				sendfile(client, filename, &statbuf);
 			}
 			if (client->next) {
 				client = client->next;
@@ -664,14 +662,14 @@ notifytree(csiebox_server* server, int conn_fd)
 	if (client->prev || client->next) { //There is already a client link in
 		char* homedir = get_user_homedir(server, client);
 		fprintf(stderr, "Notify client with conn_fd %d\n", client->conn_fd);
-		treewalk(client->conn_fd, homedir);
+		treewalk(client, homedir);
 	} else {
 		fprintf(stderr, "There are no other clients\n");
 	}
 }
 
 int
-treewalk(int conn_fd, char *filepath) 
+treewalk(csiebox_client_info* client, char *filepath) 
 {
 	//try to make client directory
 	if ( mkdir(filepath, DIR_S_FLAG) == -1){
@@ -685,11 +683,11 @@ treewalk(int conn_fd, char *filepath)
 	chdir(filepath);
 	strncpy(filepath, ".", 2);
 	filepath[1] = '\0';
-	return(handlepath(conn_fd, filepath));
+	return(handlepath(client, filepath));
 }
 
 int
-handlepath(int conn_fd, char *localpath)
+handlepath(csiebox_client_info* client, char *localpath)
 {
 	struct stat		statbuf;
 	struct dirent	*direntry;
@@ -712,10 +710,10 @@ handlepath(int conn_fd, char *localpath)
 			continue;
 		strcpy(suffix, direntry->d_name);
 		lstat(localpath, &statbuf);
-		sendfile(conn_fd, localpath, &statbuf);
+		sendfile(client, localpath, &statbuf);
 		if (S_ISDIR(statbuf.st_mode)) {
 			// get a subdirectory, call walkdir recursive
-			handlepath(conn_fd, localpath);
+			handlepath(client, localpath);
 		}
 	}
 	suffix[-1] = '\0';
@@ -757,7 +755,8 @@ static int sendmeta(int conn_fd, const char* syncfile, const struct stat* statpt
 	return -1;
 }
 
-static int sendfile(int conn_fd, const char *syncfile, const struct stat *statptr){
+static int sendfile(csiebox_client_info *client, const char *syncfile, const struct stat *statptr){
+	int conn_fd = client->conn_fd;
 	switch(sendmeta(conn_fd, syncfile, statptr) ) {
 		case(CSIEBOX_PROTOCOL_STATUS_OK):
 			printf("no need to send file\n");
@@ -788,27 +787,16 @@ static int sendfile(int conn_fd, const char *syncfile, const struct stat *statpt
 		fprintf(stderr, "send fail - file filename\n");
 		return -1;
 	}
+	if (!send_message(conn_fd, (void*)&client->offset, sizeof(long))) {
+		fprintf(stderr, "send fail - file utime value\n");
+		return -1;
+	}
 	switch(statptr->st_mode & S_IFMT){
 		case S_IFREG:
 			return basesendregfile(conn_fd, syncfile, statptr->st_size);
 		case S_IFLNK:
 			return basesendslink(conn_fd, syncfile);
 	}
-}
-
-static int sendhlink(int conn_fd, const char *src, const char *target){
-	csiebox_protocol_hardlink req;
-	memset(&req, 0, sizeof(req));
-	req.message.header.req.magic = CSIEBOX_PROTOCOL_MAGIC_REQ;
-	req.message.header.req.op = CSIEBOX_PROTOCOL_OP_SYNC_HARDLINK;
-	req.message.header.req.datalen = sizeof(req) - sizeof(req.message.header);
-	req.message.body.srclen = strlen(src);
-	req.message.body.targetlen = strlen(target);
-	if (!send_message(conn_fd, &req, sizeof(req))) {
-		fprintf(stderr, "send fail - hlink protocol\n");
-		return -1;
-	}
-	basesendhlink(conn_fd, src, target);
 }
 
 static int sendrmfile(int conn_fd, const char *rmfile){ 
