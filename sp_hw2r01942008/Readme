@@ -2,7 +2,7 @@ README
 --------------
 
 How to use:
-1. 修改client.cfg, server.cfg
+1. 修改config 的client.cfg, server.cfg
 2. run server
 3. run client
 
@@ -18,8 +18,3 @@ echo "content" >> cdir/filename
 rm cdir/filename
 
 -------------
-
-然後…
-呃…
-client有時候會當掉，上傳時會直接卡住
-我還在找原因lol

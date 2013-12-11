@@ -286,8 +286,8 @@ static void handle_request(csiebox_server* server, int conn_fd) {
 			fprintf(stderr, "unknown op %x\n", header.req.op);
 			break;
 	}
-	//fprintf(stderr, "end of connection\n");
-	//logout(server, conn_fd);
+	fprintf(stderr, "end of connection\n");
+	logout(server, conn_fd);
 }
 
 //open account file to get account information
@@ -427,7 +427,16 @@ synctime(csiebox_server* server, int conn_fd){
 }
 
 static void logout(csiebox_server* server, int conn_fd) {
-  free(server->client[conn_fd]);
+  if (server->client[conn_fd]) {
+  	csiebox_client_info *tmp = server->client[conn_fd];
+  	if (tmp->next) {
+  		tmp->next->prev = tmp->prev;
+  	}
+  	if (tmp->prev) {
+  		tmp->prev->next = tmp->next;
+  	}
+  	free(server->client[conn_fd]);
+  }
   server->client[conn_fd] = 0;
   close(conn_fd);
 }
@@ -644,7 +653,7 @@ notifyremove (csiebox_server* server, int conn_fd, char* filename)
 				sendrmfile(client->conn_fd, filename);
 			}
 			if (client->next) {
-				client->next;
+				client = client->next;
 			} else { //already at the end of the list
 				break;
 			}
