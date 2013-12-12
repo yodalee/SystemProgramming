@@ -60,7 +60,8 @@ void csiebox_server_init(
     fprintf(stderr, "Usage: %s [config file]\n", argv[0]);
     free(tmp);
     return;
-  }
+  } 
+  init_thread_pool(&tmp->pool, tmp->arg.thread_num);
   int fd = server_start();
   if (fd < 0) {
     fprintf(stderr, "server fail\n");
@@ -188,8 +189,8 @@ static int parse_arg(csiebox_server* server, int argc, char** argv) {
   char* key = (char*)malloc(sizeof(char) * keysize);
   char* val = (char*)malloc(sizeof(char) * valsize);
   ssize_t keylen, vallen;
-  int accept_config_total = 2;
-  int accept_config[2] = {0, 0};
+  int accept_config_total = 3;
+  int accept_config[3] = {0, 0, 0};
   while ((keylen = getdelim(&key, &keysize, '=', file) - 1) > 0) {
     key[keylen] = '\0';
     vallen = getline(&val, &valsize, file) - 1;
@@ -204,6 +205,13 @@ static int parse_arg(csiebox_server* server, int argc, char** argv) {
       if (vallen <= sizeof(server->arg.account_path)) {
         strncpy(server->arg.account_path, val, vallen);
         accept_config[1] = 1;
+      }
+    } else if (strcmp("thread", key) == 0) {
+      server->arg.thread_num = strtol(val, NULL, 10);
+      if (server->arg.thread_num <= 0) {
+        accept_config[2] = 0;
+      } else {
+        accept_config[2] = 1;
       }
     }
   }

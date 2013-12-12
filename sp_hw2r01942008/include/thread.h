@@ -39,7 +39,7 @@ struct task_thread {
   /* argument for a new task */
   task_thread_arg arg;
   /* thread state for thread pool picking a free thread */
-  int busy;
+  int isBusy;
 };
 
 void init_task_thread(task_thread** t);

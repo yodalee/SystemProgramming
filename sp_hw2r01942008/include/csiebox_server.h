@@ -8,6 +8,7 @@ extern "C" {
 #include "csiebox_common.h"
 
 #include <limits.h>
+#include "thread.h"
 
 typedef struct {
   char user[USER_LEN_MAX];
@@ -26,9 +27,11 @@ typedef struct {
   struct {
     char path[PATH_MAX];
     char account_path[PATH_MAX];
+    int thread_num;
   } arg;
   int listen_fd;
   csiebox_client_info** client;
+  thread_pool *pool;
 } csiebox_server;
 
 void csiebox_server_init(
