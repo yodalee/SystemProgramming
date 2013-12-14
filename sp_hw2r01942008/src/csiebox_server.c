@@ -27,9 +27,11 @@ static void logout(csiebox_server* server, int conn_fd);
 static char* get_user_homedir(
   csiebox_server* server, csiebox_client_info* info);
 
-static void getmeta(
-	csiebox_server* server, int conn_fd, csiebox_protocol_meta* meta);
 static void getfile(
+	csiebox_server* server, int conn_fd, csiebox_protocol_meta* meta);
+static int getmeta(
+	csiebox_server* server, int conn_fd, csiebox_protocol_meta* meta);
+static void getregfile(
 	csiebox_server* server, int conn_fd, csiebox_protocol_file* file);
 static void gethlink(
 	csiebox_server* server, int conn_fd, csiebox_protocol_hardlink* hlink);
@@ -238,64 +240,56 @@ static void handle_request(csiebox_server* server, int conn_fd) {
 		return;
 	}
 	switch (header.req.op) {
-		case CSIEBOX_PROTOCOL_OP_LOGIN:
-			{
-				fprintf(stderr, "login\n");
-				csiebox_protocol_login req;
-				if (complete_message_with_header(conn_fd, &header, &req)) {
-					if(login(server, conn_fd, &req) ){
-						synctime(server, conn_fd);
-					}
-				}
-				break;
-			}
-		case CSIEBOX_PROTOCOL_OP_SYNC_META:
-			{
-				csiebox_protocol_meta meta;
-				if (complete_message_with_header(conn_fd, &header, &meta)) {
-					getmeta(server, conn_fd, &meta);
-				}
-				break;
-			}
-		case CSIEBOX_PROTOCOL_OP_SYNC_FILE:
-			{
-				csiebox_protocol_file file;
-				if (complete_message_with_header(conn_fd, &header, &file)) {
-					getfile(server, conn_fd, &file);
-				}
-				break;
-			}
-		case CSIEBOX_PROTOCOL_OP_SYNC_HARDLINK:
-			{
-				csiebox_protocol_hardlink hardlink;
-				if (complete_message_with_header(conn_fd, &header, &hardlink)) {
-					gethlink(server, conn_fd, &hardlink);
-				}
-				break;
-			}
-		case CSIEBOX_PROTOCOL_OP_SYNC_END:
-			{
-				header.res.magic = CSIEBOX_PROTOCOL_MAGIC_RES;
-				header.res.status = CSIEBOX_PROTOCOL_STATUS_OK;
-			    send_message(conn_fd, &header, sizeof(header));
-				fprintf(stderr, "client %d sync file end\n", conn_fd);
-				notifytree(server, conn_fd);
-				break;
-			}
-		case CSIEBOX_PROTOCOL_OP_RM:
-			{
-				csiebox_protocol_rm rm;
-				if (complete_message_with_header(conn_fd, &header, &rm)) {
-					getrmfile(server, conn_fd, &rm);
-				}
-				break;
-			}
-		default:
-			fprintf(stderr, "unknown op %x\n", header.req.op);
-			break;
+	  case CSIEBOX_PROTOCOL_OP_LOGIN:
+      {
+        fprintf(stderr, "login\n");
+        csiebox_protocol_login req;
+        if (complete_message_with_header(conn_fd, &header, &req)) {
+            if(login(server, conn_fd, &req) ){
+                synctime(server, conn_fd);
+            }
+        }
+        break;
+      }
+	  case CSIEBOX_PROTOCOL_OP_SYNC_META:
+      {
+        csiebox_protocol_meta meta;
+        if (complete_message_with_header(conn_fd, &header, &meta)) {
+            getfile(server, conn_fd, &meta);
+        }
+        break;
+      }
+      case CSIEBOX_PROTOCOL_OP_SYNC_HARDLINK:
+      {
+        csiebox_protocol_hardlink hardlink;
+        if (complete_message_with_header(conn_fd, &header, &hardlink)) {
+            gethlink(server, conn_fd, &hardlink);
+        }
+        break;
+      }
+	  case CSIEBOX_PROTOCOL_OP_SYNC_END:
+	  	{
+	  		header.res.magic = CSIEBOX_PROTOCOL_MAGIC_RES;
+	  		header.res.status = CSIEBOX_PROTOCOL_STATUS_OK;
+	  	    send_message(conn_fd, &header, sizeof(header));
+	  		fprintf(stderr, "client %d sync file end\n", conn_fd);
+	  		notifytree(server, conn_fd);
+	  		break;
+	  	}
+	  case CSIEBOX_PROTOCOL_OP_RM:
+	  {
+	    csiebox_protocol_rm rm;
+	    if (complete_message_with_header(conn_fd, &header, &rm)) {
+	    	getrmfile(server, conn_fd, &rm);
+	    }
+	    break;
+	  }
+	  default:
+	    fprintf(stderr, "unknown op %x\n", header.req.op);
+	    break;
 	}
-	fprintf(stderr, "end of connection\n");
-	logout(server, conn_fd);
+	//fprintf(stderr, "end of connection\n");
+	//logout(server, conn_fd);
 }
 
 //open account file to get account information
@@ -457,11 +451,35 @@ static char* get_user_homedir(
   return ret;
 }
 
+static void getfile(
+    csiebox_server *server, int conn_fd, csiebox_protocol_meta *meta) {
+  int ret = getmeta(server, conn_fd, meta);
+  if (ret == CSIEBOX_PROTOCOL_STATUS_MORE) {
+    csiebox_protocol_header header;
+    memset(&header, 0, sizeof(header));
+    recv_message(conn_fd, &header, sizeof(header));
+    if (header.req.magic != CSIEBOX_PROTOCOL_MAGIC_REQ) {
+        return;
+    }
+    switch (header.req.op) {
+      case CSIEBOX_PROTOCOL_OP_SYNC_FILE:
+      {
+        csiebox_protocol_file file;
+        if (complete_message_with_header(conn_fd, &header, &file)) {
+            getregfile(server, conn_fd, &file);
+        }
+        break;
+      }
+    }
+  }
+}
+
+
 //handle the send meta request, mkdir if the meta is a directory
 //return STATUS_OK if no need to sendfile
 //return STATUS_FAIL if something wrong
 //return STATUS_MORE if need sendfile
-static void getmeta(
+static int getmeta(
 		csiebox_server* server, int conn_fd, csiebox_protocol_meta* meta) {
 	//extract user info header
 	int status = 1;
@@ -508,9 +526,10 @@ static void getmeta(
 
 	free(fullpath);
 	free(filepath);
+    return status;
 }
 
-static void getfile(
+static void getregfile(
 	csiebox_server* server, int conn_fd, csiebox_protocol_file* file) {
 	//extract user info header
 	csiebox_client_info* info =
