@@ -252,10 +252,8 @@ static void handle_request(csiebox_server* server, int conn_fd) {
                 synctime(server, conn_fd);
             }
         }
-        break;
       }
       break;
-    }
     case CSIEBOX_PROTOCOL_OP_SYNC_META:
     {
       csiebox_protocol_meta meta;
@@ -273,14 +271,10 @@ static void handle_request(csiebox_server* server, int conn_fd) {
       break;
     }
     case CSIEBOX_PROTOCOL_OP_SYNC_END:
-    	{
-    		header.res.magic = CSIEBOX_PROTOCOL_MAGIC_RES;
-    		header.res.status = CSIEBOX_PROTOCOL_STATUS_OK;
-    	    send_message(conn_fd, &header, sizeof(header));
-    		fprintf(stderr, "client %d sync file end\n", conn_fd);
-    		notifytree(server, conn_fd);
-    		break;
-    	}
+    {
+      syncend(server, conn_fd, &header);
+      break;
+    }
     case CSIEBOX_PROTOCOL_OP_RM:
     {
       csiebox_protocol_rm rm;
@@ -613,6 +607,16 @@ static void gethlink(
 	free(srcpath);
 	free(targetpath);
 	free(filepath);
+}
+
+static void syncend(
+    csiebox_server *server, int conn_fd, csiebox_protocol_header *header)
+{
+  header->res.magic = CSIEBOX_PROTOCOL_MAGIC_RES;
+  header->res.status = CSIEBOX_PROTOCOL_STATUS_OK;
+  send_message(conn_fd, &header, sizeof(csiebox_protocol_header));
+  fprintf(stderr, "client %d sync file end\n", conn_fd);
+  notifytree(server, conn_fd);
 }
 
 static void getrmfile(

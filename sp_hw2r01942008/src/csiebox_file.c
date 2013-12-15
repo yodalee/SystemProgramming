@@ -14,12 +14,12 @@ basesendregfile	(int conn_fd, const char* filepath, long filesize)
 	FILE *readfile = fopen(filepath, "rb");
 	if (filepath == NULL) {
 		fprintf(stderr, "cannot open file for transfer: %s\n", filepath);
-		return -1;
+		return CSIEBOX_PROTOCOL_STATUS_FAIL;
 	}
 	char *buffer = (char*)malloc(sizeof(char)*BUFFER_SIZE);
 	if (buffer == NULL) {
 		fprintf(stderr, "cannot open memory for file buffer\n");
-		return -2;
+		return CSIEBOX_PROTOCOL_STATUS_FAIL;
 	}
 	int numr = 0;
     int size = 0;
@@ -30,12 +30,12 @@ basesendregfile	(int conn_fd, const char* filepath, long filesize)
 		if ((numr = fread(buffer, 1, size, readfile)) != size ) {
 			if (ferror(readfile) != 0) {
 				fprintf(stderr, "read file error: %s\n", filepath);
-				return -1;
+                return CSIEBOX_PROTOCOL_STATUS_FAIL;
 			}
 		}
 		if (!send_message(conn_fd, buffer, numr)) {
 			fprintf(stderr, "send file fail\n");
-			return -1;
+            return CSIEBOX_PROTOCOL_STATUS_FAIL;
 		}
 		filesize -= numr;
 	}
@@ -90,8 +90,13 @@ int getendheader(int conn_fd, csiebox_protocol_op header_type){
 		if (header.res.magic == CSIEBOX_PROTOCOL_MAGIC_RES &&
 			header.res.op == header_type &&
 			header.res.status == CSIEBOX_PROTOCOL_STATUS_OK) {
-			return 0;
-		}
+            return header.res.status;
+		} else if (
+            header.res.magic == CSIEBOX_PROTOCOL_MAGIC_RES &&
+            header.res.op == header_type &&
+            header.res.status == CSIEBOX_PROTOCOL_STATUS_BUSY) {
+            return header.res.status;
+        }
 	}
 	return -1;
 }

@@ -46,6 +46,7 @@ typedef enum {
   CSIEBOX_PROTOCOL_STATUS_OK = 0x00,
   CSIEBOX_PROTOCOL_STATUS_FAIL = 0x01,
   CSIEBOX_PROTOCOL_STATUS_MORE = 0x02,
+  CSIEBOX_PROTOCOL_STATUS_BUSY = 0x03,
 } csiebox_protocol_status;
 
 //common header

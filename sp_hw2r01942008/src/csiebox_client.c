@@ -82,9 +82,16 @@ int csiebox_client_run(csiebox_client* client) {
 	treewalk(filepath, &list);
 
 	//upload file, check hardlink in the sametime
-	for (idx = 0; idx < list.used; ++idx) {
-		checkfile(client, &list, idx);
-	}
+    int res = 0;
+    while (idx < list.used) {
+	  res = checkfile(client, &list, idx);
+      if (res == CSIEBOX_PROTOCOL_STATUS_FAIL
+          || res == CSIEBOX_PROTOCOL_STATUS_BUSY) {
+        sleep(BUSY_WAIT_TIME);
+      } else if (res == CSIEBOX_PROTOCOL_STATUS_OK) {
+        ++idx;
+      }
+    }
 
 	sendend(client);
 	
@@ -357,16 +364,19 @@ static int sendfile(csiebox_client* client, const char* syncfile, const struct s
 	switch(sendmeta(client, syncfile, statptr) ) {
 		case(CSIEBOX_PROTOCOL_STATUS_OK):
 			printf("no need to send file\n");
-			return 0;
+            return CSIEBOX_PROTOCOL_STATUS_OK;
 		case(CSIEBOX_PROTOCOL_STATUS_FAIL):
 			printf("there is something wrong on server\n");
-			return -1;
+            return CSIEBOX_PROTOCOL_STATUS_FAIL;
+		case(CSIEBOX_PROTOCOL_STATUS_BUSY):
+			printf("Server busy\n");
+            return CSIEBOX_PROTOCOL_STATUS_BUSY;
 		case(CSIEBOX_PROTOCOL_STATUS_MORE):
 			printf("Start uploading file %s\n", syncfile);
 			break;
 		case -1:
 			fprintf(stderr, "something wrong uploading %s\n", syncfile);
-			return -1;
+            return CSIEBOX_PROTOCOL_STATUS_FAIL;
 	}
 	csiebox_protocol_file req;
 	memset(&req, 0, sizeof(req));
@@ -379,11 +389,11 @@ static int sendfile(csiebox_client* client, const char* syncfile, const struct s
 	req.message.body.isSlink = ((statptr->st_mode & S_IFMT) == S_IFLNK)? 1:0;
 	if (!send_message(client->conn_fd, &req, sizeof(req))) {
 		fprintf(stderr, "send fail - file protocol\n");
-		return -1;
+        return CSIEBOX_PROTOCOL_STATUS_FAIL;
 	}
 	if (!send_message(client->conn_fd, (void*)syncfile, strlen(syncfile))) {
 		fprintf(stderr, "send fail - file filename\n");
-		return -1;
+        return CSIEBOX_PROTOCOL_STATUS_FAIL;
 	}
 	switch(statptr->st_mode & S_IFMT){
 		case S_IFREG:
@@ -406,7 +416,7 @@ static int sendhlink(csiebox_client* client, const char *src, const char *target
 		fprintf(stderr, "send fail - hlink protocol\n");
 		return -1;
 	}
-	basesendhlink(client->conn_fd, src, target);
+	return basesendhlink(client->conn_fd, src, target);
 }
 
 static int sendrmfile(csiebox_client *client, const char* path){
@@ -693,23 +703,22 @@ findfile(filearray* list, char* filename){
 
 int 
 checkfile(csiebox_client* client, filearray* list, int idx){
-	int i;
-	fileinfo* target = &list->array[idx];
-	//get newest statbuf
-	lstat(target->path, &target->statbuf);
-	//search for hardlink
-	if (target->statbuf.st_nlink > 1 &&
-			(target->statbuf.st_mode & S_IFMT) == S_IFREG) {
-		for (i = 0; i < idx; i++) {
-			if (target->statbuf.st_ino == list->array[i].statbuf.st_ino &&
-			   (target->statbuf.st_dev == list->array[i].statbuf.st_dev)) {
-				printf("get a hard link from %s to %s\n", target->path, list->array[i].path);
-				sendhlink(client, list->array[i].path, target->path);
-				return 0;
-			}
-		}
-	}
-	handlefile(client, target);
+  int i;
+  fileinfo* target = &list->array[idx];
+  //get newest statbuf
+  lstat(target->path, &target->statbuf);
+  //search for hardlink
+  if (target->statbuf.st_nlink > 1 &&
+  		(target->statbuf.st_mode & S_IFMT) == S_IFREG) {
+  	for (i = 0; i < idx; i++) {
+  		if (target->statbuf.st_ino == list->array[i].statbuf.st_ino &&
+  		   (target->statbuf.st_dev == list->array[i].statbuf.st_dev)) {
+  			printf("get a hard link from %s to %s\n", target->path, list->array[i].path);
+  			return sendhlink(client, list->array[i].path, target->path);
+  		}
+  	}
+  }
+  return handlefile(client, target);
 }
 
 int
@@ -718,21 +727,15 @@ handlefile(csiebox_client* client, fileinfo* info)
 	switch(info->statbuf.st_mode & S_IFMT){
 		case S_IFREG:
 			printf("get a regular file: %s\n", info->path);
-			sendfile(client, info->path, &info->statbuf);
+			return sendfile(client, info->path, &info->statbuf);
 			break;
 		case S_IFLNK:
 			printf("get a slink: %s\n", info->path);
-			sendfile(client, info->path, &info->statbuf);
+			return sendfile(client, info->path, &info->statbuf);
 			break;
 		case S_IFDIR:
 			printf("get a directory: %s\n", info->path);
-			sendmeta(client, info->path, &info->statbuf);
+			return sendfile(client, info->path, &info->statbuf);
 			break;
-		case S_IFBLK:
-		case S_IFCHR:
-		case S_IFIFO:
-			printf("Don't know how to handle OAO\n");
-			return -1;
 	}
-	return 0;
 }
