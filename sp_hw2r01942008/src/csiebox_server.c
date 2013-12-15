@@ -311,13 +311,15 @@ static void handle_request(void *inarg, void *outarg) {
     {
       csiebox_protocol_rm rm;
       if (complete_message_with_header(conn_fd, &header, &rm)) {
-      	getrmfile(server, conn_fd, &rm);
+        getrmfile(server, conn_fd, &rm);
       }
       break;
     }
     default:
+    {
       fprintf(stderr, "unknown op %x\n", header.req.op);
       break;
+    }
   }
   *conn_fd_ptr = conn_fd;
   //fprintf(stderr, "end of connection\n");
@@ -586,11 +588,24 @@ static void getregfile(
     //if cannot get file lock, call file merger
 	int succ = 1;
 	if (isSlink) {
-		basegetslink(conn_fd, fullpath, filesize, &succ);
+	  basegetslink(conn_fd, fullpath, filesize, &succ);
+      subOffset(fullpath, server->client[conn_fd]->offset);
 	} else {
-		basegetregfile(conn_fd, fullpath, filesize, &succ);
+      fprintf(stderr, "sync file %s\n", fullpath);
+      FILE* writefile= fopen(fullpath, "w"); //use this mode to prevent truncate file
+      if (writefile == NULL) {
+          fprintf(stderr, "cannot open writefile\n");
+          succ = 0;
+      } else {
+        //exclusive nonblocking lock
+        if (flock(fileno(writefile), LOCK_EX | LOCK_NB) != 0){
+          //cannot get the lock file
+        }
+        basegetregfile(conn_fd, writefile, filesize, &succ);
+        subOffset(fullpath, server->client[conn_fd]->offset);
+        flock(fileno(writefile), LOCK_UN);
+      }
 	}
-	subOffset(fullpath, server->client[conn_fd]->offset);
 	sendendheader(
 		conn_fd, CSIEBOX_PROTOCOL_OP_SYNC_FILE,
 		(succ)?CSIEBOX_PROTOCOL_STATUS_OK:CSIEBOX_PROTOCOL_STATUS_FAIL

@@ -3,7 +3,6 @@ doc
 library
 fileMerger
 sdir
-cdir
-cdir2
+cdir*
 *.swp
 *.o
