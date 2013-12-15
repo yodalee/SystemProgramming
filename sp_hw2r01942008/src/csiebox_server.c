@@ -10,6 +10,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/select.h>
+#include <sys/file.h>
 #include <dirent.h>
 #include <time.h>
 #include <netinet/in.h>
@@ -37,6 +38,8 @@ static void gethlink(
 	csiebox_server* server, int conn_fd, csiebox_protocol_hardlink* hlink);
 static void getrmfile(
 	csiebox_server* server, int conn_fd, csiebox_protocol_rm *rm);
+static void handleconflict(
+    csiebox_server *server, char *file1, char *file2);
 
 static void notifyupdate(csiebox_server* server, int conn_fd, char* filename);
 static void notifyremove(csiebox_server* server, int conn_fd, char* filename);
@@ -559,12 +562,17 @@ static void getregfile(
 	  basegetslink(conn_fd, fullpath, filesize, &succ);
 	} else {
       fprintf(stderr, "sync file %s\n", fullpath);
-      FILE* writefile= fopen(fullpath, "w");
+      FILE* writefile= fopen(fullpath, "r+"); //use this mode to prevent truncate file
       if (writefile == NULL) {
           fprintf(stderr, "cannot open writefile\n");
           succ = 0;
       }
+      //exclusive nonblocking lock
+      if (flock(fileno(writefile), LOCK_EX | LOCK_NB) != 0){
+        //cannot get the lock file
+      }
 	  basegetregfile(conn_fd, writefile, filesize, &succ);
+      flock(fileno(writefile), LOCK_UN);
 	}
 	subOffset(fullpath, server->client[conn_fd]->offset);
 	sendendheader(
