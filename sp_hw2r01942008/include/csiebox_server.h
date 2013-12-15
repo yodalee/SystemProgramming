@@ -34,6 +34,11 @@ typedef struct {
   thread_pool *pool;
 } csiebox_server;
 
+typedef struct {
+  csiebox_server *server;
+  int *conn_fd_ptr; 
+} csiebox_task_arg;
+
 void csiebox_server_init(
   csiebox_server** server, int argc, char** argv);
 int csiebox_server_run(csiebox_server* server);

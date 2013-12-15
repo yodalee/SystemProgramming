@@ -14,8 +14,8 @@ typedef struct thread_pool thread_pool;
 
 /* basic thread */
 struct thread {
-  void* (*thread_func)(void* arg);
   pthread_t tid;
+  void* (*thread_func)(void* arg);
   void* arg;
 };
 
@@ -27,8 +27,8 @@ struct task_thread_arg {
   void* input;
   void* output;
   void (*func)(void* input, void* output);
-  void (*callback)(void* arg);
-  void* callback_arg;
+  //void (*callback)(void* arg);
+  //void* callback_arg;
 };
 
 struct task_thread {

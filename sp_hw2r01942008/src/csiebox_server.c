@@ -18,7 +18,8 @@
 #include <netdb.h>
 
 static int parse_arg(csiebox_server* server, int argc, char** argv);
-static void handle_request(csiebox_server* server, int conn_fd);
+static void prepare_arg(csiebox_server *server, int *conn_fd_ptr);
+static void handle_request(void *inarg, void *outarg);
 static int get_account_info(
   csiebox_server* server,  const char* user, csiebox_account_info* info);
 static int login(
@@ -36,6 +37,8 @@ static void getregfile(
 	csiebox_server* server, int conn_fd, csiebox_protocol_file* file);
 static void gethlink(
 	csiebox_server* server, int conn_fd, csiebox_protocol_hardlink* hlink);
+static void syncend(
+	csiebox_server* server, int conn_fd, csiebox_protocol_header *header);
 static void getrmfile(
 	csiebox_server* server, int conn_fd, csiebox_protocol_rm *rm);
 static void handleconflict(
@@ -127,7 +130,8 @@ int csiebox_server_run(csiebox_server* server) {
 		// handle request from connected socket fd
 		for (i = 0; i < current_max; ++i) {
 			if (FD_ISSET(active_fd[i], &readset)) {
-				handle_request(server, active_fd[i]);
+                prepare_arg(server, &active_fd[i]);
+				//handle_request(server, &active_fd[i]);
 			}
 		}
 		// A new connection
@@ -234,8 +238,36 @@ static int parse_arg(csiebox_server* server, int argc, char** argv) {
   return 1;
 }
 
+static void
+prepare_arg(csiebox_server *server, int *conn_fd_ptr)
+{
+  task_thread_arg *arg = (task_thread_arg*)malloc(sizeof(task_thread_arg));
+  csiebox_task_arg *inarg = (csiebox_task_arg*)malloc(sizeof(csiebox_task_arg));
+  inarg->server = server;
+  inarg->conn_fd_ptr = conn_fd_ptr;
+  arg->input = (void*)inarg;
+  arg->output = NULL;
+  arg->func = &handle_request;
+  if((run_task(server->pool, arg)) < 0){
+    //no free thread available
+    //clear data in buffer and return busy
+    int conn_fd = *conn_fd_ptr;
+    char buf[BUFSIZ];
+    csiebox_protocol_header header;
+    recv_message(conn_fd, &header, sizeof(header));
+    if (complete_message_with_header(conn_fd, &header, &buf)) { 
+      sendendheader(conn_fd, header.req.op, CSIEBOX_PROTOCOL_STATUS_BUSY);
+    }
+  }
+}
+
 //this is where the server handle requests, you should write your code here
-static void handle_request(csiebox_server* server, int conn_fd) {
+static void handle_request(void *inarg, void *outarg) {
+    csiebox_task_arg *arg = (csiebox_task_arg*)inarg;
+    csiebox_server* server = arg->server;
+    int *conn_fd_ptr = arg->conn_fd_ptr;
+    int conn_fd = *conn_fd_ptr;
+    *conn_fd_ptr = 0; //stop select from monitor it
 	csiebox_protocol_header header;
 	memset(&header, 0, sizeof(header));
 	recv_message(conn_fd, &header, sizeof(header));
@@ -287,6 +319,7 @@ static void handle_request(csiebox_server* server, int conn_fd) {
       fprintf(stderr, "unknown op %x\n", header.req.op);
       break;
   }
+  *conn_fd_ptr = conn_fd;
   //fprintf(stderr, "end of connection\n");
   //logout(server, conn_fd);
 }
