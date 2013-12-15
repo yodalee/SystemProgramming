@@ -545,7 +545,13 @@ static void getfile(
 	if (isSlink) {
 		basegetslink(client->conn_fd, fullpath, filesize, &succ);
 	} else {
-		basegetregfile(client->conn_fd, fullpath, filesize, &succ);
+        fprintf(stderr, "sync file %s\n", fullpath);
+        FILE* writefile= fopen(fullpath, "w");
+        if (writefile == NULL) {
+            fprintf(stderr, "cannot open writefile\n");
+            succ = 0;
+        }
+		basegetregfile(client->conn_fd, writefile, filesize, &succ);
 	}
 	subOffset(fullpath, offset);
 

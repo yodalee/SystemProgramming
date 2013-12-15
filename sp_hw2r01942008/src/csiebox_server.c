@@ -233,23 +233,21 @@ static int parse_arg(csiebox_server* server, int argc, char** argv) {
 
 //this is where the server handle requests, you should write your code here
 static void handle_request(csiebox_server* server, int conn_fd) {
-	csiebox_protocol_header header;
-	memset(&header, 0, sizeof(header));
-	recv_message(conn_fd, &header, sizeof(header));
-	if (header.req.magic != CSIEBOX_PROTOCOL_MAGIC_REQ) {
-		return;
-	}
-	switch (header.req.op) {
-	  case CSIEBOX_PROTOCOL_OP_LOGIN:
-      {
-        fprintf(stderr, "login\n");
-        csiebox_protocol_login req;
-        if (complete_message_with_header(conn_fd, &header, &req)) {
-            if(login(server, conn_fd, &req) ){
-                synctime(server, conn_fd);
-            }
-        }
-        break;
+  csiebox_protocol_header header;
+  memset(&header, 0, sizeof(header));
+  recv_message(conn_fd, &header, sizeof(header));
+  if (header.req.magic != CSIEBOX_PROTOCOL_MAGIC_REQ) {
+      return;
+  }
+  switch (header.req.op) {
+    case CSIEBOX_PROTOCOL_OP_LOGIN:
+    {
+      fprintf(stderr, "login\n");
+      csiebox_protocol_login req;
+      if (complete_message_with_header(conn_fd, &header, &req)) {
+          if(login(server, conn_fd, &req) ){
+              synctime(server, conn_fd);
+          }
       }
       break;
     }
@@ -270,28 +268,30 @@ static void handle_request(csiebox_server* server, int conn_fd) {
       break;
     }
     case CSIEBOX_PROTOCOL_OP_SYNC_END:
-    	{
-    		header.res.magic = CSIEBOX_PROTOCOL_MAGIC_RES;
-    		header.res.status = CSIEBOX_PROTOCOL_STATUS_OK;
-    	    send_message(conn_fd, &header, sizeof(header));
-    		fprintf(stderr, "client %d sync file end\n", conn_fd);
-    		notifytree(server, conn_fd);
-    		break;
-    	}
+        {
+            header.res.magic = CSIEBOX_PROTOCOL_MAGIC_RES;
+            header.res.status = CSIEBOX_PROTOCOL_STATUS_OK;
+            send_message(conn_fd, &header, sizeof(header));
+            fprintf(stderr, "client %d sync file end\n", conn_fd);
+            notifytree(server, conn_fd);
+            break;
+        }
     case CSIEBOX_PROTOCOL_OP_RM:
     {
       csiebox_protocol_rm rm;
       if (complete_message_with_header(conn_fd, &header, &rm)) {
-      	getrmfile(server, conn_fd, &rm);
+        getrmfile(server, conn_fd, &rm);
       }
       break;
     }
     default:
+    {
       fprintf(stderr, "unknown op %x\n", header.req.op);
       break;
+    }
   }
-  //fprintf(stderr, "end of connection\n");
-  //logout(server, conn_fd);
+//fprintf(stderr, "end of connection\n");
+//logout(server, conn_fd);
 }
 
 //open account file to get account information
@@ -551,12 +551,20 @@ static void getregfile(
 	recv_message(conn_fd, filepath, length);
 	strncat(fullpath, filepath, length);
 
-	//get file, here is using some dangerous mechanism
+	//get file, if is slink, simply get slink
+    //if is regular file, first get file lock, then using basegetregfile to retrieve file
+    //if cannot get file lock, call file merger
 	int succ = 1;
 	if (isSlink) {
-		basegetslink(conn_fd, fullpath, filesize, &succ);
+	  basegetslink(conn_fd, fullpath, filesize, &succ);
 	} else {
-		basegetregfile(conn_fd, fullpath, filesize, &succ);
+      fprintf(stderr, "sync file %s\n", fullpath);
+      FILE* writefile= fopen(fullpath, "w");
+      if (writefile == NULL) {
+          fprintf(stderr, "cannot open writefile\n");
+          succ = 0;
+      }
+	  basegetregfile(conn_fd, writefile, filesize, &succ);
 	}
 	subOffset(fullpath, server->client[conn_fd]->offset);
 	sendendheader(

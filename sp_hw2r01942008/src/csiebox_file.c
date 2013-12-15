@@ -1,12 +1,5 @@
 #include "csiebox_file.h"
 
-#include <stdlib.h>
-#include <stdio.h>
-#include <errno.h>
-#include <string.h>
-#include <sys/stat.h>
-#include <linux/limits.h>
-#include <utime.h>
 
 int 
 basesendregfile	(int conn_fd, const char* filepath, long filesize)
@@ -94,13 +87,7 @@ int getendheader(int conn_fd, csiebox_protocol_op header_type){
 	return -1;
 }
 
-void basegetregfile (int conn_fd, const char* filepath, int filesize, int *succ){
-	fprintf(stderr, "sync file %s\n", filepath);
-	FILE* writefile= fopen(filepath, "w");
-	if (writefile == NULL) {
-		fprintf(stderr, "cannot open writefile\n");
-		succ = 0;
-	}
+void basegetregfile (int conn_fd, FILE *writefile, int filesize, int *succ){
 	char* buffer = (char*)malloc(sizeof(char)*BUFFER_SIZE);
 	if (buffer == NULL) {
 		fprintf(stderr, "cannot allocate write memory\n");
