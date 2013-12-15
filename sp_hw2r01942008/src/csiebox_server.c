@@ -251,45 +251,47 @@ static void handle_request(csiebox_server* server, int conn_fd) {
         }
         break;
       }
-	  case CSIEBOX_PROTOCOL_OP_SYNC_META:
-      {
-        csiebox_protocol_meta meta;
-        if (complete_message_with_header(conn_fd, &header, &meta)) {
-            getfile(server, conn_fd, &meta);
-        }
-        break;
+      break;
+    }
+    case CSIEBOX_PROTOCOL_OP_SYNC_META:
+    {
+      csiebox_protocol_meta meta;
+      if (complete_message_with_header(conn_fd, &header, &meta)) {
+          getfile(server, conn_fd, &meta);
       }
-      case CSIEBOX_PROTOCOL_OP_SYNC_HARDLINK:
-      {
-        csiebox_protocol_hardlink hardlink;
-        if (complete_message_with_header(conn_fd, &header, &hardlink)) {
-            gethlink(server, conn_fd, &hardlink);
-        }
-        break;
+      break;
+    }
+    case CSIEBOX_PROTOCOL_OP_SYNC_HARDLINK:
+    {
+      csiebox_protocol_hardlink hardlink;
+      if (complete_message_with_header(conn_fd, &header, &hardlink)) {
+          gethlink(server, conn_fd, &hardlink);
       }
-	  case CSIEBOX_PROTOCOL_OP_SYNC_END:
-	  	{
-	  		header.res.magic = CSIEBOX_PROTOCOL_MAGIC_RES;
-	  		header.res.status = CSIEBOX_PROTOCOL_STATUS_OK;
-	  	    send_message(conn_fd, &header, sizeof(header));
-	  		fprintf(stderr, "client %d sync file end\n", conn_fd);
-	  		notifytree(server, conn_fd);
-	  		break;
-	  	}
-	  case CSIEBOX_PROTOCOL_OP_RM:
-	  {
-	    csiebox_protocol_rm rm;
-	    if (complete_message_with_header(conn_fd, &header, &rm)) {
-	    	getrmfile(server, conn_fd, &rm);
-	    }
-	    break;
-	  }
-	  default:
-	    fprintf(stderr, "unknown op %x\n", header.req.op);
-	    break;
-	}
-	//fprintf(stderr, "end of connection\n");
-	//logout(server, conn_fd);
+      break;
+    }
+    case CSIEBOX_PROTOCOL_OP_SYNC_END:
+    	{
+    		header.res.magic = CSIEBOX_PROTOCOL_MAGIC_RES;
+    		header.res.status = CSIEBOX_PROTOCOL_STATUS_OK;
+    	    send_message(conn_fd, &header, sizeof(header));
+    		fprintf(stderr, "client %d sync file end\n", conn_fd);
+    		notifytree(server, conn_fd);
+    		break;
+    	}
+    case CSIEBOX_PROTOCOL_OP_RM:
+    {
+      csiebox_protocol_rm rm;
+      if (complete_message_with_header(conn_fd, &header, &rm)) {
+      	getrmfile(server, conn_fd, &rm);
+      }
+      break;
+    }
+    default:
+      fprintf(stderr, "unknown op %x\n", header.req.op);
+      break;
+  }
+  //fprintf(stderr, "end of connection\n");
+  //logout(server, conn_fd);
 }
 
 //open account file to get account information
@@ -473,7 +475,6 @@ static void getfile(
     }
   }
 }
-
 
 //handle the send meta request, mkdir if the meta is a directory
 //return STATUS_OK if no need to sendfile
