@@ -22,10 +22,12 @@ basesendregfile	(int conn_fd, const char* filepath, long filesize)
 		return -2;
 	}
 	int numr = 0;
+    int size = 0;
 
-	fprintf(stderr, "start send file %s\n", filepath);
+	fprintf(stderr, "start send file %s, size %ld\n", filepath, filesize);
 	while (filesize%BUFFER_SIZE > 0) {
-		if ((numr = fread(buffer, 1, filesize%BUFFER_SIZE, readfile)) != filesize%BUFFER_SIZE ) {
+        size = (filesize>BUFFER_SIZE)?BUFFER_SIZE:filesize%BUFFER_SIZE;
+		if ((numr = fread(buffer, 1, size, readfile)) != size ) {
 			if (ferror(readfile) != 0) {
 				fprintf(stderr, "read file error: %s\n", filepath);
 				return -1;
@@ -98,7 +100,7 @@ void basegetregfile (int conn_fd, const char* filepath, int filesize, int *succ)
 	fprintf(stderr, "sync file %s\n", filepath);
 	FILE* writefile= fopen(filepath, "w");
 	if (writefile == NULL) {
-		fprintf(stderr, "cannot open writefile\n");
+		fprintf(stderr, "cannot open write file\n");
 		succ = 0;
 	}
 	char* buffer = (char*)malloc(sizeof(char)*BUFFER_SIZE);
@@ -107,14 +109,18 @@ void basegetregfile (int conn_fd, const char* filepath, int filesize, int *succ)
 		succ = 0;
 	}
 
+    int size;
+
+    fprintf(stderr, "%d\n", filesize);
 	while (succ && (filesize != 0)) {
-		if (!recv_message(conn_fd, buffer, filesize % BUFFER_SIZE)) {
+        size = (filesize>BUFFER_SIZE) ? BUFFER_SIZE : filesize%BUFFER_SIZE;
+		if (!recv_message(conn_fd, buffer, size)) {
 			fprintf(stderr, "Something wrong during file transfer\n");
 			succ = 0;
 			break;
 		}
-		fwrite(buffer, 1, filesize%BUFFER_SIZE, writefile);
-		filesize -= filesize%BUFFER_SIZE;
+		fwrite(buffer, 1, size, writefile);
+		filesize -= size;
 	}
 	fclose(writefile);
 }
