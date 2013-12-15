@@ -10,6 +10,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/select.h>
+#include <sys/file.h>
 #include <dirent.h>
 #include <time.h>
 #include <netinet/in.h>
@@ -37,6 +38,8 @@ static void gethlink(
 	csiebox_server* server, int conn_fd, csiebox_protocol_hardlink* hlink);
 static void getrmfile(
 	csiebox_server* server, int conn_fd, csiebox_protocol_rm *rm);
+static void handleconflict(
+    csiebox_server *server, char *file1, char *file2);
 
 static void notifyupdate(csiebox_server* server, int conn_fd, char* filename);
 static void notifyremove(csiebox_server* server, int conn_fd, char* filename);
@@ -551,7 +554,9 @@ static void getregfile(
 	recv_message(conn_fd, filepath, length);
 	strncat(fullpath, filepath, length);
 
-	//get file, here is using some dangerous mechanism
+	//get file, if is slink, simply get slink
+    //if is regular file, first get file lock, then using basegetregfile to retrieve file
+    //if cannot get file lock, call file merger
 	int succ = 1;
 	if (isSlink) {
 		basegetslink(conn_fd, fullpath, filesize, &succ);
