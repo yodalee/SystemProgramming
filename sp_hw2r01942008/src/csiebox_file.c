@@ -114,6 +114,7 @@ void basegetregfile (int conn_fd, FILE *writefile, int filesize, int *succ){
 		fwrite(buffer, 1, size, writefile);
 		filesize -= size;
 	}
+    fprintf(stderr, "file get end\n");
 	fclose(writefile);
 }
 

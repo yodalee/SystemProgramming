@@ -65,11 +65,19 @@ void csiebox_client_init(
 int csiebox_client_run(csiebox_client* client) {
 	int idx = 0;
 
-	if (!login(client)) {
-		fprintf(stderr, "login fail\n");
-		return 0;
-	}
-	fprintf(stderr, "login success\n");
+    while (1) {
+      int ret = login(client);
+      if (ret == 0) {
+        fprintf(stderr, "login fail\n");
+        return 0;
+      } else if (ret == 1) {
+        fprintf(stderr, "login success\n");
+        break;
+      } else if (ret == 2) {
+        fprintf(stderr, "Server busy\n");
+        sleep(BUSY_WAIT_TIME);
+      }
+    }
 	//sync time getween server and client
 	synctime(client);
 
@@ -202,8 +210,10 @@ static int login(csiebox_client* client) {
         header.res.status == CSIEBOX_PROTOCOL_STATUS_OK) {
       client->client_id = header.res.client_id;
       return 1;
-    } else {
-      return 0;
+    } else if (header.res.magic == CSIEBOX_PROTOCOL_MAGIC_RES &&
+        header.res.op == CSIEBOX_PROTOCOL_OP_LOGIN &&
+        header.res.status == CSIEBOX_PROTOCOL_STATUS_BUSY) {
+      return 2;
     }
   }
   return 0;

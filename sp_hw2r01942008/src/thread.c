@@ -74,7 +74,7 @@ init_thread_pool(thread_pool **pool, int num)
   }
   memset(tmp, 0, sizeof(thread_pool));
   tmp->thread_num = num;
-  tmp->threads = (task_thread**)malloc(num*sizeof(task_thread));
+  tmp->threads = (task_thread**)malloc(num*sizeof(task_thread*));
   //initial task thread
   int i = 0;
   for (i = 0; i < num; ++i) {
