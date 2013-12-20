@@ -37,6 +37,7 @@ typedef struct {
 typedef struct {
   csiebox_server *server;
   int *conn_fd_ptr; 
+  int *block_fd_ptr;
 } csiebox_task_arg;
 
 void csiebox_server_init(
