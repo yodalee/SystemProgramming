@@ -42,7 +42,7 @@ static void syncend(
 static void getrmfile(
 	csiebox_server* server, int conn_fd, csiebox_protocol_rm *rm);
 static void handleconflict(
-    csiebox_server *server, char *file1, char *file2);
+    csiebox_server *server, int conn, char *file1, int filesize);
 
 static void notifyupdate(csiebox_server* server, int conn_fd, char* filename);
 static void notifyremove(csiebox_server* server, int conn_fd, char* filename);
@@ -587,23 +587,25 @@ static void getregfile(
     //if is regular file, first get file lock, then using basegetregfile to retrieve file
     //if cannot get file lock, call file merger
 	int succ = 1;
+    int fd = 0;
+    FILE *writefile;
 	if (isSlink) {
 	  basegetslink(conn_fd, fullpath, filesize, &succ);
       subOffset(fullpath, server->client[conn_fd]->offset);
 	} else {
       fprintf(stderr, "sync file %s\n", fullpath);
-      FILE* writefile= fopen(fullpath, "w"); //use this mode to prevent truncate file
-      if (writefile == NULL) {
-          fprintf(stderr, "cannot open writefile\n");
-          succ = 0;
-      } else {
-        //exclusive nonblocking lock
-        if (flock(fileno(writefile), LOCK_EX | LOCK_NB) != 0){
-          //cannot get the lock file
-        }
+      fd = open(fullpath, O_WRONLY | O_CREAT);
+      if (flock(fd, LOCK_EX | LOCK_NB) == 0) {
+        fprintf(stderr, "get file lock %s\n", fullpath);
+        ftruncate(fileno(writefile), 0);
+        writefile = fdopen(fd, "w"); //use this mode to prevent truncate file
         basegetregfile(conn_fd, writefile, filesize, &succ);
         subOffset(fullpath, server->client[conn_fd]->offset);
-        flock(fileno(writefile), LOCK_UN);
+        flock(fd, LOCK_UN);
+      } else {
+        fprintf(stderr, "file locked, conflict detect on file: %s\n", fullpath);
+        handleconflict(server, conn_fd, fullpath, filesize);
+        return;
       }
 	}
 	sendendheader(
@@ -695,10 +697,50 @@ static void getrmfile(
 	//return protocol
 	sendendheader( conn_fd, CSIEBOX_PROTOCOL_OP_RM,
 		(succ)?CSIEBOX_PROTOCOL_STATUS_OK:CSIEBOX_PROTOCOL_STATUS_FAIL);
-	notifyremove(server, conn_fd, filepath);
+	//notifyremove(server, conn_fd, filepath);
 
 	free(fullpath);
 	free(filepath);
+}
+
+static void
+handleconflict(csiebox_server *server, int conn_fd, char *file1, int filesize)
+{
+  char tmp1[PATH_MAX] = "tempfile";
+  char tmp2[PATH_MAX] = "tempfile";
+  int succ = 1;
+  pid_t pid;
+  //try to get file lock, until upload thread end upload
+  int fd = open(file1, O_WRONLY | O_CREAT, REG_S_FLAG);
+  while (1) {
+    int ret = flock(fd, LOCK_EX | LOCK_NB);
+    fprintf(stderr, "busy wait =w=\n");
+    if (ret == 0) { //get the lock, thread 1 file upload end
+      break;
+    }
+  }
+  //rename version 1 file into temporary name
+  rename(file1, tmp1);
+  //get version 2 file into temporary
+  tmpnam(tmp1);
+  int fd2 = mkstemp(tmp2);
+  FILE *writefile = fdopen(fd2, "w+");
+  basegetregfile(conn_fd, writefile, filesize, &succ);
+  //call file_merger to merge
+  if ((pid = fork()) < 0) {
+    fprintf(stderr, "fork error\n");
+  } else if (pid == 0) { //child call exec file_merger
+    if (execl("./file_merger", "file_merger", "a", "a", "b", "c", (char*)0) < 0) {
+      fprintf(stderr, "execle error\n");
+    }
+  } else {
+    if (waitpid(pid, NULL, 0) < 0){
+      fprintf(stderr, "wait error\n");
+    }
+  }
+  //clear temporary file
+  unlink(tmp1);
+  unlink(tmp2);
 }
 
 static void 
