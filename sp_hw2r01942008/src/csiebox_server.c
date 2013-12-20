@@ -18,7 +18,7 @@
 #include <netdb.h>
 
 static int parse_arg(csiebox_server* server, int argc, char** argv);
-static void prepare_arg(csiebox_server *server, int *conn_fd_ptr);
+static void prepare_arg(csiebox_server *server, int *conn_fd_ptr, int *block_fd_ptr);
 static void handle_request(void *inarg, void *outarg);
 static int get_account_info(
   csiebox_server* server,  const char* user, csiebox_account_info* info);
@@ -99,8 +99,10 @@ int csiebox_server_run(csiebox_server* server) {
 	int maxfd = server->listen_fd;
 	//active fd
 	int active_fd[maxlink];
+	int block_fd[maxlink];
 	for (i = 0; i < maxlink; ++i) {
 		active_fd[i] = 0;
+        block_fd[i] = 0;
 	}
 	int current_max = 0;
 
@@ -112,7 +114,7 @@ int csiebox_server_run(csiebox_server* server) {
 		FD_ZERO(&readset);
 		FD_SET(server->listen_fd, &readset);
 		for (i = 0; i < maxlink; ++i) {
-			if(active_fd[i] != 0){
+			if(active_fd[i] != 0 && block_fd[i] == 0){
 				FD_SET(active_fd[i], &readset);
 			}
 		}
@@ -130,8 +132,9 @@ int csiebox_server_run(csiebox_server* server) {
 		// handle request from connected socket fd
 		for (i = 0; i < current_max; ++i) {
 			if (FD_ISSET(active_fd[i], &readset)) {
-                prepare_arg(server, &active_fd[i]);
-				//handle_request(server, &active_fd[i]);
+                fprintf(stderr, "get fd %d in tid: %ld\n", active_fd[i], pthread_self());
+                block_fd[i] = 1;
+                prepare_arg(server, &(active_fd[i]), &(block_fd[i]));
 			}
 		}
 		// A new connection
@@ -239,12 +242,13 @@ static int parse_arg(csiebox_server* server, int argc, char** argv) {
 }
 
 static void
-prepare_arg(csiebox_server *server, int *conn_fd_ptr)
+prepare_arg(csiebox_server *server, int *conn_fd_ptr, int *block_fd_ptr)
 {
   task_thread_arg *arg = (task_thread_arg*)malloc(sizeof(task_thread_arg));
   csiebox_task_arg *inarg = (csiebox_task_arg*)malloc(sizeof(csiebox_task_arg));
   inarg->server = server;
   inarg->conn_fd_ptr = conn_fd_ptr;
+  inarg->block_fd_ptr = block_fd_ptr;
   arg->input = (void*)inarg;
   arg->output = NULL;
   arg->func = &handle_request;
@@ -265,9 +269,9 @@ prepare_arg(csiebox_server *server, int *conn_fd_ptr)
 static void handle_request(void *inarg, void *outarg) {
     csiebox_task_arg *arg = (csiebox_task_arg*)inarg;
     csiebox_server* server = arg->server;
-    int *conn_fd_ptr = arg->conn_fd_ptr;
-    int conn_fd = *conn_fd_ptr;
-    *conn_fd_ptr = 0; //stop select from monitor it
+    int conn_fd = *(arg->conn_fd_ptr);
+    int *block_fd_ptr = arg->block_fd_ptr;
+    printf("thread %ld get fd %d\n", pthread_self(), conn_fd);
 	csiebox_protocol_header header;
 	memset(&header, 0, sizeof(header));
 	recv_message(conn_fd, &header, sizeof(header));
@@ -321,7 +325,7 @@ static void handle_request(void *inarg, void *outarg) {
       break;
     }
   }
-  *conn_fd_ptr = conn_fd;
+  *block_fd_ptr = 0;
   //fprintf(stderr, "end of connection\n");
   //logout(server, conn_fd);
 }
@@ -459,7 +463,6 @@ synctime(csiebox_server* server, int conn_fd){
 	//return OK to client, prevent sync again
 	sendendheader(conn_fd, CSIEBOX_PROTOCOL_OP_SYNC_TIME
 		, CSIEBOX_PROTOCOL_STATUS_OK);
-
 }
 
 static void logout(csiebox_server* server, int conn_fd) {

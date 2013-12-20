@@ -7,17 +7,16 @@ void
 init_task_thread(task_thread** t)
 {
   task_thread *tmp = (task_thread*)malloc(sizeof(task_thread));
-  memset(tmp, 0, sizeof(task_thread));
   tmp->thread_instance = (thread*)malloc(sizeof(thread));
   tmp->thread_instance->arg = NULL;
   pthread_mutex_init(&(tmp->control_lock), NULL);
   pthread_mutex_lock(&(tmp->control_lock));
+  tmp->isBusy = 0;
   if(pthread_create(&(tmp->thread_instance->tid), NULL,
         &task_thread_func, tmp)){
     fprintf(stderr, "cannot create thread\n");
     return;
   }
-  pthread_mutex_unlock(&tmp->control_lock);
   *t = tmp;
 }
 
@@ -28,18 +27,17 @@ destroy_task_thread(task_thread **t)
   task_thread *tmp = *t;
   pthread_cancel(tmp->thread_instance->tid);
   free(tmp->thread_instance);
+  pthread_mutex_destroy(&(tmp->control_lock));
   free(tmp);
 }
 
 void 
 launch(task_thread *t, task_thread_arg *arg) 
 {
-  if (pthread_mutex_lock(&(t->control_lock))) {
-    perror("pthread_mutex_lock: in thread");
-  }
   t->isBusy = 1;
   t->arg = *arg;
   t->thread_instance->arg = (void*)(&(t->arg));
+  printf("%x, %x\n", t->thread_instance->arg, &(t->arg));
   if (pthread_mutex_unlock(&(t->control_lock))) {
     perror("pthread_mutex_unlock: in thread");
   }
@@ -51,16 +49,10 @@ task_thread_func(void *arg)
   task_thread *task = (task_thread*)arg;
   while (1) {
     pthread_mutex_lock(&(task->control_lock));
-    if (task->thread_instance->arg == NULL) {
-      //currently no work to do
-      pthread_mutex_unlock(&(task->control_lock));
-    } else {
-      //process it by calling the func
-      task->arg.func(task->arg.input, task->arg.output);
-      task->isBusy = 0;
-      task->thread_instance->arg = NULL;
-      pthread_mutex_unlock(&(task->control_lock));
-    }
+    printf("%x\n", &(task->arg));
+    //process it by calling the func
+    task->arg.func(task->arg.input, task->arg.output);
+    task->isBusy = 0;
   }
 }
 
@@ -72,9 +64,8 @@ init_thread_pool(thread_pool **pool, int num)
     fprintf(stderr, "thread pool malloc fail\n");
     return;
   }
-  memset(tmp, 0, sizeof(thread_pool));
   tmp->thread_num = num;
-  tmp->threads = (task_thread**)malloc(num*sizeof(task_thread));
+  tmp->threads = (task_thread**)malloc(num*sizeof(task_thread*));
   //initial task thread
   int i = 0;
   for (i = 0; i < num; ++i) {
@@ -110,5 +101,6 @@ destroy_thread_pool(thread_pool **pool)
   for (i = 0; i < tmp->thread_num; ++i) {
     destroy_task_thread(&(tmp->threads[i]));
   }
+  pthread_mutex_destroy(&(tmp->dispatch_lock));
   free(tmp);
 }
