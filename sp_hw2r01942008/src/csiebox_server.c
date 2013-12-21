@@ -132,7 +132,7 @@ int csiebox_server_run(csiebox_server* server) {
 		// handle request from connected socket fd
 		for (i = 0; i < current_max; ++i) {
 			if (FD_ISSET(active_fd[i], &readset)) {
-                fprintf(stderr, "get fd %d in tid: %ld\n", active_fd[i], pthread_self());
+                fprintf(stderr, "get fd %d transfer data\n", active_fd[i]);
                 block_fd[i] = 1;
                 prepare_arg(server, &(active_fd[i]), &(block_fd[i]));
 			}
@@ -276,6 +276,7 @@ static void handle_request(void *inarg, void *outarg) {
 	memset(&header, 0, sizeof(header));
 	recv_message(conn_fd, &header, sizeof(header));
 	if (header.req.magic != CSIEBOX_PROTOCOL_MAGIC_REQ) {
+        *block_fd_ptr = 0;
 		return;
 	}
 	switch (header.req.op) {
@@ -528,7 +529,6 @@ static int getmeta(
 	//get home directory from client_id
 	info = server->client[client_id];
     char* fullpath = get_user_homedir(server, info);
-	chdir(fullpath);
 	char* filepath = (char*)malloc(length+1);
 	recv_message(conn_fd, filepath, length);
 	strncat(fullpath, filepath, length);
@@ -580,7 +580,6 @@ static void getregfile(
 	info = server->client[client_id];
 
     char* fullpath = get_user_homedir(server, info);
-	chdir(fullpath);
 	char* filepath = (char*)malloc(length+1);
 	filepath[length] = '\0';
 	recv_message(conn_fd, filepath, length);
@@ -597,18 +596,17 @@ static void getregfile(
       subOffset(fullpath, server->client[conn_fd]->offset);
 	} else {
       fprintf(stderr, "sync file %s\n", fullpath);
-      fd = open(fullpath, O_WRONLY | O_CREAT);
-      if (flock(fd, LOCK_EX | LOCK_NB) == 0) {
+      fd = open(fullpath, O_WRONLY | O_CREAT, REG_S_FLAG);
+      if (flock(fd, LOCK_EX | LOCK_NB) != -1) {
         fprintf(stderr, "get file lock %s\n", fullpath);
+        writefile = fdopen(fd, "w");
         ftruncate(fileno(writefile), 0);
-        writefile = fdopen(fd, "w"); //use this mode to prevent truncate file
         basegetregfile(conn_fd, writefile, filesize, &succ);
         subOffset(fullpath, server->client[conn_fd]->offset);
         flock(fd, LOCK_UN);
       } else {
         fprintf(stderr, "file locked, conflict detect on file: %s\n", fullpath);
         handleconflict(server, conn_fd, fullpath, filesize);
-        return;
       }
 	}
 	sendendheader(
@@ -616,8 +614,8 @@ static void getregfile(
 		(succ)?CSIEBOX_PROTOCOL_STATUS_OK:CSIEBOX_PROTOCOL_STATUS_FAIL
 		);
 
-	notifyupdate(server, conn_fd, filepath);
-
+	//notifyupdate(server, conn_fd, filepath);
+    
 	free(fullpath);
 	free(filepath);
 }
@@ -638,7 +636,6 @@ static void gethlink(
 	info = server->client[client_id];
     char* srcpath = get_user_homedir(server, info);
     char* targetpath = get_user_homedir(server, info);
-	chdir(targetpath);
 	char* filepath = (char*)malloc(PATH_MAX);
 	recv_message(conn_fd, filepath, srclen);
 	strncat(srcpath, filepath, srclen);
@@ -655,7 +652,7 @@ static void gethlink(
 	}
 	sendendheader( conn_fd, CSIEBOX_PROTOCOL_OP_SYNC_HARDLINK,
 		(succ)?CSIEBOX_PROTOCOL_STATUS_OK:CSIEBOX_PROTOCOL_STATUS_FAIL);
-	notifyupdate(server, conn_fd, targetpath);
+	//notifyupdate(server, conn_fd, targetpath);
 
 	free(srcpath);
 	free(targetpath);
@@ -669,7 +666,7 @@ static void syncend(
   header->res.status = CSIEBOX_PROTOCOL_STATUS_OK;
   send_message(conn_fd, &header, sizeof(csiebox_protocol_header));
   fprintf(stderr, "client %d sync file end\n", conn_fd);
-  notifytree(server, conn_fd);
+  //notifytree(server, conn_fd);
 }
 
 static void getrmfile(
@@ -685,7 +682,6 @@ static void getrmfile(
 	//get file fullpath
 	info = server->client[client_id];
     char* fullpath = get_user_homedir(server, info);
-	chdir(fullpath);
 	char* filepath = (char*)malloc(PATH_MAX);
 	recv_message(conn_fd, filepath, pathlen);
 	strncat(fullpath, filepath, pathlen);
@@ -709,31 +705,22 @@ static void getrmfile(
 static void
 handleconflict(csiebox_server *server, int conn_fd, char *file1, int filesize)
 {
-  char tmp1[PATH_MAX] = "tempfile";
-  char tmp2[PATH_MAX] = "tempfile";
-  int succ = 1;
+  char tmp[PATH_MAX] = "tempfile-XXXXXX";
+  char *file2 = (char*)malloc(PATH_MAX*sizeof(char));
+  strcpy(file2, file1);
+  strcat(file2, ".merge");
   pid_t pid;
-  //try to get file lock, until upload thread end upload
-  int fd = open(file1, O_WRONLY | O_CREAT, REG_S_FLAG);
-  while (1) {
-    int ret = flock(fd, LOCK_EX | LOCK_NB);
-    fprintf(stderr, "busy wait =w=\n");
-    if (ret == 0) { //get the lock, thread 1 file upload end
-      break;
-    }
-  }
-  //rename version 1 file into temporary name
-  rename(file1, tmp1);
+  int succ = 1;
   //get version 2 file into temporary
-  tmpnam(tmp1);
-  int fd2 = mkstemp(tmp2);
-  FILE *writefile = fdopen(fd2, "w+");
+  int fd = mkstemp(tmp);
+  FILE *writefile = fdopen(fd, "w");
   basegetregfile(conn_fd, writefile, filesize, &succ);
+  
   //call file_merger to merge
   if ((pid = fork()) < 0) {
     fprintf(stderr, "fork error\n");
   } else if (pid == 0) { //child call exec file_merger
-    if (execl("./file_merger", "file_merger", "a", "a", "b", "c", (char*)0) < 0) {
+    if (execl("./file_merger", "file_merger", file1, file1, tmp, file2, (char*)0) < 0) {
       fprintf(stderr, "execle error\n");
     }
   } else {
@@ -742,8 +729,7 @@ handleconflict(csiebox_server *server, int conn_fd, char *file1, int filesize)
     }
   }
   //clear temporary file
-  unlink(tmp1);
-  unlink(tmp2);
+  unlink(tmp);
 }
 
 static void 

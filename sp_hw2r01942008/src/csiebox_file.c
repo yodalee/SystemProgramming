@@ -34,6 +34,7 @@ basesendregfile	(int conn_fd, const char* filepath, long filesize)
 	}
 	fclose(readfile);
 	free(buffer);
+    fprintf(stderr, "file send end\n");
 
 	return getendheader(conn_fd, CSIEBOX_PROTOCOL_OP_SYNC_FILE);
 }

@@ -37,7 +37,6 @@ launch(task_thread *t, task_thread_arg *arg)
   t->isBusy = 1;
   t->arg = *arg;
   t->thread_instance->arg = (void*)(&(t->arg));
-  printf("%x, %x\n", t->thread_instance->arg, &(t->arg));
   if (pthread_mutex_unlock(&(t->control_lock))) {
     perror("pthread_mutex_unlock: in thread");
   }
@@ -49,7 +48,6 @@ task_thread_func(void *arg)
   task_thread *task = (task_thread*)arg;
   while (1) {
     pthread_mutex_lock(&(task->control_lock));
-    printf("%x\n", &(task->arg));
     //process it by calling the func
     task->arg.func(task->arg.input, task->arg.output);
     task->isBusy = 0;
