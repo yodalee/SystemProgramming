@@ -1,13 +1,14 @@
-TARGET=port_register csiebox_client csiebox_server
+TARGET=mkdir port_register csiebox_client csiebox_server file_merger
 INCLUDE=-I../include
 BIN=../bin
 FLAG=-g
 GCC=gcc
 #for c++
-#GCC=g++
+GXX=g++
 PORT_REGISTER_OBJS=port_register.o connect.o hash.o
 CSIEBOX_SERVER_OBJS=csiebox_server_main.o csiebox_server.o connect.o csiebox_common.o csiebox_file.o thread.o
 CSIEBOX_CLIENT_OBJS=csiebox_client_main.o csiebox_client.o connect.o csiebox_common.o csiebox_file.o
+FILE_MERGER_OBJS=common.o fileMerger.o fileMergerMain.o
 LIB=-lm -lbsd -lpthread
 .PHONY: clean
 all: $(TARGET)
@@ -24,6 +25,8 @@ clean:
 		echo "rm -rf $(BIN)/$$bin"; \
 		rm -rf $(BIN)/$$bin; \
 	done
+mkdir:
+	mkdir -p $(BIN)
 port_register: $(PORT_REGISTER_OBJS)
 	@echo "making: " $@
 	@$(GCC) -o $(BIN)/$@ $(FLAG) $(INCLUDE) $(PORT_REGISTER_OBJS)
@@ -33,3 +36,6 @@ csiebox_client: $(CSIEBOX_CLIENT_OBJS)
 csiebox_server: $(CSIEBOX_SERVER_OBJS)
 	@echo "making: " $@
 	@$(GCC) -o $(BIN)/$@ $(FLAG) $(INCLUDE) $(CSIEBOX_SERVER_OBJS) $(LIB)
+file_merger: $(FILE_MERGER_OBJS)
+	@echo "making: " $@
+	@$(GXX) -o $(BIN)/$@ $(FLAG) $(INCLUDE) $(FILE_MERGER_OBJS) $(LIB)
