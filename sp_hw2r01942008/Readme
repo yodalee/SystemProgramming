@@ -6,15 +6,16 @@ How to use:
 2. run server
 3. run client
 
-測試create inotify
-echo "content" > cdir/filename
-試過一定會觸發這個事件
+這是一個屍體
+主要bugs
+client結束後server仍會持續收到資料，原因不明
+開超過thread數量的client後，client回報server Busy
+然後…當掉lol
 
-測試modify inotify
-echo "content" >> cdir/filename
-這個比較安全，用圖形介面大多不會觸發
-
-測試delete
-rm cdir/filename
-
+測試merger
+因為上傳速度太快了
+如果很難測，可以在csiebox_server.c 606行前
+加上一行
+sleep(10)
+強制讓file不解鎖而進入merge狀態
 -------------

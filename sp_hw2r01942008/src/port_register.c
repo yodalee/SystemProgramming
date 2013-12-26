@@ -23,6 +23,7 @@ typedef struct {
 
 static int book_port(char* name, int size);
 static int get_port(char* name, int size);
+static int web_port(char* name, int size);
 static int get_hash_code(char* name, int size);
 static int get_next_port();
 static void handle_request(int conn);
@@ -145,10 +146,18 @@ static int get_port(char* name, int size) {
   return r->port;
 }
 
+static int web_port(char* name, int size) {
+  int ret = get_port(name, size);
+  if (ret == -1) {
+    ret = book_port(name, size);
+  }
+  return htonl(ret);
+}
+
 static int get_hash_code(char* name, int size) {
-  int code = 0, i = 0;
+  int code = 1, i = 0;
   for (i = 0; i < size; ++i) {
-    code = (code*256) + (int)name[i];
+    code = (code * code) + (int)name[i];
   }
   return code;
 }
@@ -192,6 +201,13 @@ static void handle_request(int conn) {
       print_timestamp();
       fprintf(stderr, "request %s\n", buf);
       info_ret = get_port(buf, ret);
+      break;
+    case '2':
+      print_timestamp();
+      fprintf(stderr, "request web %s\n", buf);
+      info_ret = web_port(buf, ret);
+      print_timestamp();
+      fprintf(stderr, "before htonl %d\n", ntohl(info_ret));
       break;
     default:
       print_timestamp();
