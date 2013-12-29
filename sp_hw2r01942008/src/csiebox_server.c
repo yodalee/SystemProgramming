@@ -18,7 +18,7 @@
 #include <netdb.h>
 
 static int parse_arg(csiebox_server* server, int argc, char** argv);
-static void prepare_arg(csiebox_server *server, int *conn_fd_ptr, int *block_fd_ptr);
+static void prepare_arg(csiebox_server *server, int client_id);
 static void handle_request(void *inarg, void *outarg);
 static int get_account_info(
   csiebox_server* server,  const char* user, csiebox_account_info* info);
@@ -97,14 +97,6 @@ int csiebox_server_run(csiebox_server* server) {
 	int conn_fd, conn_len;
 	struct sockaddr_in addr;
 	int maxfd = server->listen_fd;
-	//active fd
-	int active_fd[maxlink];
-	int block_fd[maxlink];
-	for (i = 0; i < maxlink; ++i) {
-		active_fd[i] = 0;
-        block_fd[i] = 0;
-	}
-	int current_max = 0;
 
 	fd_set readset;
 	struct timeval tv;
@@ -113,9 +105,13 @@ int csiebox_server_run(csiebox_server* server) {
 		//set monitor dile descriptor
 		FD_ZERO(&readset);
 		FD_SET(server->listen_fd, &readset);
-		for (i = 0; i < maxlink; ++i) {
-			if(active_fd[i] != 0 && block_fd[i] == 0){
-				FD_SET(active_fd[i], &readset);
+		for (i = 0; i < getdtablesize(); ++i) {
+          if (server->client[i] && 
+              server->client[i]->status == LINK){ 
+				FD_SET(server->client[i]->conn_fd, &readset);
+                if (server->client[i]->conn_fd > maxfd) {
+                  maxfd = server->client[i]->conn_fd;
+                }
 			}
 		}
 		//reset waiting time
@@ -130,13 +126,13 @@ int csiebox_server_run(csiebox_server* server) {
 				continue;
 		}
 		// handle request from connected socket fd
-		for (i = 0; i < current_max; ++i) {
-			if (FD_ISSET(active_fd[i], &readset)) {
-                fprintf(stderr, "get fd %d transfer data\n", active_fd[i]);
-                block_fd[i] = 1;
-                prepare_arg(server, &(active_fd[i]), &(block_fd[i]));
-			}
-		}
+        for (i = 0; i < getdtablesize(); ++i) {
+          if (server->client[i] && FD_ISSET(server->client[i]->conn_fd, &readset)) {
+            fprintf(stderr, "get fd %d transfer data\n", server->client[i]->conn_fd);
+            server->client[i]->status = PROCESS;
+            prepare_arg(server, i);
+          }
+        }
 		// A new connection
 		if (FD_ISSET(server->listen_fd, &readset)) {
 			memset(&addr, 0, sizeof(addr));
@@ -155,16 +151,23 @@ int csiebox_server_run(csiebox_server* server) {
 					break;
 				}
 			}
-			if (current_max < maxlink) {
-				active_fd[current_max++] = conn_fd;
-				fprintf(stderr, "New connection on file descriptor %d\n", conn_fd);
-				if (conn_fd > maxfd) {
-					maxfd = conn_fd;
-				}
-			} else {
-				fprintf(stderr, "Max connections exceed, close fd\n");
-				close(conn_fd);
-			}
+            fprintf(stderr, "New connection on file descriptor %d\n", conn_fd);
+            csiebox_protocol_header header;
+            memset(&header, 0, sizeof(header));
+            recv_message(conn_fd, &header, sizeof(header));
+            if (header.req.magic != CSIEBOX_PROTOCOL_MAGIC_REQ) {
+                server->client[conn_fd]->status = LINK;
+                return;
+            }
+            if (header.req.op == CSIEBOX_PROTOCOL_OP_LOGIN) {
+              fprintf(stderr, "login\n");
+              csiebox_protocol_login req;
+              if (complete_message_with_header(conn_fd, &header, &req)) {
+                  if(login(server, conn_fd, &req) ){
+                      synctime(server, conn_fd);
+                  }
+              }
+            }
 		}
 	}
 	return 1;
@@ -242,20 +245,19 @@ static int parse_arg(csiebox_server* server, int argc, char** argv) {
 }
 
 static void
-prepare_arg(csiebox_server *server, int *conn_fd_ptr, int *block_fd_ptr)
+prepare_arg(csiebox_server *server, int client_id)
 {
   task_thread_arg *arg = (task_thread_arg*)malloc(sizeof(task_thread_arg));
   csiebox_task_arg *inarg = (csiebox_task_arg*)malloc(sizeof(csiebox_task_arg));
   inarg->server = server;
-  inarg->conn_fd_ptr = conn_fd_ptr;
-  inarg->block_fd_ptr = block_fd_ptr;
+  inarg->client_id = client_id;
   arg->input = (void*)inarg;
   arg->output = NULL;
   arg->func = &handle_request;
   if((run_task(server->pool, arg)) < 0){
     //no free thread available
     //clear data in buffer and return busy
-    int conn_fd = *conn_fd_ptr;
+    int conn_fd = server->client[client_id]->conn_fd;
     char buf[BUFSIZ];
     csiebox_protocol_header header;
     recv_message(conn_fd, &header, sizeof(header));
@@ -269,28 +271,17 @@ prepare_arg(csiebox_server *server, int *conn_fd_ptr, int *block_fd_ptr)
 static void handle_request(void *inarg, void *outarg) {
     csiebox_task_arg *arg = (csiebox_task_arg*)inarg;
     csiebox_server* server = arg->server;
-    int conn_fd = *(arg->conn_fd_ptr);
-    int *block_fd_ptr = arg->block_fd_ptr;
+    int client_id = arg->client_id;
+    int conn_fd = server->client[client_id]->conn_fd;
     printf("thread %ld get fd %d\n", pthread_self(), conn_fd);
 	csiebox_protocol_header header;
 	memset(&header, 0, sizeof(header));
 	recv_message(conn_fd, &header, sizeof(header));
 	if (header.req.magic != CSIEBOX_PROTOCOL_MAGIC_REQ) {
-        *block_fd_ptr = 0;
+        server->client[client_id]->status = LINK;
 		return;
 	}
 	switch (header.req.op) {
-	  case CSIEBOX_PROTOCOL_OP_LOGIN:
-      {
-        fprintf(stderr, "login\n");
-        csiebox_protocol_login req;
-        if (complete_message_with_header(conn_fd, &header, &req)) {
-            if(login(server, conn_fd, &req) ){
-                synctime(server, conn_fd);
-            }
-        }
-      }
-      break;
     case CSIEBOX_PROTOCOL_OP_SYNC_META:
     {
       csiebox_protocol_meta meta;
@@ -326,7 +317,7 @@ static void handle_request(void *inarg, void *outarg) {
       break;
     }
   }
-  *block_fd_ptr = 0;
+  server->client[client_id]->status = LINK;
   //fprintf(stderr, "end of connection\n");
   //logout(server, conn_fd);
 }
@@ -399,10 +390,12 @@ static int login(
 				tmp->prev->next = tmp->next;
 			}
 			free(server->client[conn_fd]);
+            server->client[conn_fd] = NULL;
 		}
 		info->conn_fd = conn_fd;
 		info->next = NULL;
 		info->prev = NULL;
+        info->status = LINK;
 		server->client[conn_fd] = info;
 		//find same client and link into
 		int i;
