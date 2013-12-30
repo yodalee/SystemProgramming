@@ -11,6 +11,7 @@ extern "C" {
 #include "thread.h"
 
 #define pidFile "csiebox_server.pid"
+enum Status {NOCLIENT, LINK, PROCESS};
 
 typedef struct {
   char user[USER_LEN_MAX];
@@ -21,6 +22,7 @@ typedef struct client_info_struct {
   csiebox_account_info account;
   int conn_fd;
   long offset;
+  enum Status status;
   struct client_info_struct* next;
   struct client_info_struct* prev;
 } csiebox_client_info;
@@ -41,8 +43,7 @@ typedef struct {
 
 typedef struct {
   csiebox_server *server;
-  int *conn_fd_ptr; 
-  int *block_fd_ptr;
+  int client_id; 
 } csiebox_task_arg;
 
 void csiebox_server_init(
