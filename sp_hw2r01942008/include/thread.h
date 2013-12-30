@@ -59,6 +59,8 @@ struct thread_pool {
 void init_thread_pool(thread_pool** pool, int num);
 /* dispatch a task to a thread */
 int run_task(thread_pool* pool, task_thread_arg* arg);
+/* check number of working thread */
+int check_working(thread_pool *pool);
 void destroy_thread_pool(thread_pool** pool);
 
 #ifdef __cplusplus

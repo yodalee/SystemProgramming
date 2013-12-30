@@ -10,6 +10,8 @@ extern "C" {
 #include <limits.h>
 #include "thread.h"
 
+#define pidFile "csiebox_server.pid"
+
 typedef struct {
   char user[USER_LEN_MAX];
   char passwd_hash[MD5_DIGEST_LENGTH];
@@ -27,7 +29,10 @@ typedef struct {
   struct {
     char path[PATH_MAX];
     char account_path[PATH_MAX];
+    char fifofile[PATH_MAX];
     int thread_num;
+    int has_run_path;
+    int isDaemonize;
   } arg;
   int listen_fd;
   csiebox_client_info** client;

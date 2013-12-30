@@ -11,13 +11,19 @@
 #include <sys/socket.h>
 #include <sys/select.h>
 #include <sys/file.h>
+#include <sys/stat.h>
+#include <signal.h>
 #include <dirent.h>
 #include <time.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
 
+static csiebox_server *global_server;
+
 static int parse_arg(csiebox_server* server, int argc, char** argv);
+static void writeFIFO(int signum);
+static void deleteFIFO();
 static void prepare_arg(csiebox_server *server, int *conn_fd_ptr, int *block_fd_ptr);
 static void handle_request(void *inarg, void *outarg);
 static int get_account_info(
@@ -87,6 +93,7 @@ void csiebox_server_init(
   memset(tmp->client, 0, sizeof(csiebox_client_info*) * getdtablesize());
   tmp->listen_fd = fd;
   *server = tmp;
+  global_server = *server;
 }
 
 //wait client to connect and handle requests from connected socket fd
@@ -108,6 +115,22 @@ int csiebox_server_run(csiebox_server* server) {
 
 	fd_set readset;
 	struct timeval tv;
+
+    //catch signal
+    struct sigaction intaction;
+    struct sigaction usraction;
+    intaction.sa_handler = &deleteFIFO;
+    sigaction(SIGINT, &intaction, NULL);
+    sigaction(SIGTERM, &intaction, NULL);
+    //create fifo
+    int ret;
+    ret = mkfifo(global_server->arg.fifofile, 0777);
+    if (ret == -1) {
+      fprintf(stderr, "make fifo file error\n");
+    } else {
+      usraction.sa_handler = &writeFIFO;
+      sigaction(SIGUSR1, &usraction, NULL);
+    }
 
 	while (1) {
 		//set monitor dile descriptor
@@ -167,6 +190,18 @@ int csiebox_server_run(csiebox_server* server) {
 			}
 		}
 	}
+
+    //unset signal
+    intaction.sa_handler = SIG_DFL;
+    sigaction(SIGINT, &intaction, NULL);
+    sigaction(SIGTERM, &intaction, NULL);
+    //create fifo
+    usraction.sa_handler = SIG_DFL;
+    sigaction(SIGUSR1, &usraction, NULL);
+    
+    //deleteFIFO
+    deleteFIFO();
+
 	return 1;
 }
 
@@ -201,8 +236,8 @@ static int parse_arg(csiebox_server* server, int argc, char** argv) {
   char* key = (char*)malloc(sizeof(char) * keysize);
   char* val = (char*)malloc(sizeof(char) * valsize);
   ssize_t keylen, vallen;
-  int accept_config_total = 3;
-  int accept_config[3] = {0, 0, 0};
+  int accept_config_total = 4;
+  int accept_config[4] = {0, 0, 0, 0};
   while ((keylen = getdelim(&key, &keysize, '=', file) - 1) > 0) {
     key[keylen] = '\0';
     vallen = getline(&val, &valsize, file) - 1;
@@ -225,6 +260,17 @@ static int parse_arg(csiebox_server* server, int argc, char** argv) {
       } else {
         accept_config[2] = 1;
       }
+    } else if (strcmp("run_path", key) == 0) {
+      server->arg.has_run_path = 1;
+      accept_config[3] = 1;
+      char run_path[PATH_MAX];
+      pid_t pid = getpid();
+      fprintf(stderr, "server pid = %u\n", pid);
+      if (vallen <= sizeof(server->arg.fifofile)) {
+        strncpy(server->arg.fifofile, val, vallen);
+      }
+      sprintf(run_path, "/csiebox_server.%u", pid);
+      strcat(server->arg.fifofile, run_path);
     }
   }
   free(key);
@@ -239,6 +285,21 @@ static int parse_arg(csiebox_server* server, int argc, char** argv) {
     return 0;
   }
   return 1;
+}
+
+static void 
+writeFIFO(int signum)
+{
+}
+
+static void 
+deleteFIFO()
+{
+  int ret;
+  ret = unlink(global_server->arg.fifofile);
+  if (ret == -1) {
+    fprintf(stderr, "delete fifo file error\n");
+  }
 }
 
 static void

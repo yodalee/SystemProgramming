@@ -91,6 +91,21 @@ run_task(thread_pool *pool, task_thread_arg* arg)
   return found;
 }
 
+int
+check_working(thread_pool *pool) 
+{
+  int workingNum = 0;
+  int i;
+  pthread_mutex_lock(&(pool->dispatch_lock));
+  for (i = 0; i < pool->thread_num; ++i) {
+    if (pool->threads[i]->isBusy) {
+      ++workingNum;
+    }
+  }
+  pthread_mutex_unlock(&(pool->dispatch_lock));
+  return workingNum;
+}
+
 void 
 destroy_thread_pool(thread_pool **pool) 
 {
