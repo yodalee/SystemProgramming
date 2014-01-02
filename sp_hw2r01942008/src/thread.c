@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdint.h>
 #include "thread.h"
 
 void
@@ -91,10 +92,10 @@ run_task(thread_pool *pool, task_thread_arg* arg)
   return found;
 }
 
-int
+uint32_t
 check_working(thread_pool *pool) 
 {
-  int workingNum = 0;
+  uint32_t workingNum = 0;
   int i;
   pthread_mutex_lock(&(pool->dispatch_lock));
   for (i = 0; i < pool->thread_num; ++i) {

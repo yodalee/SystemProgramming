@@ -25,7 +25,7 @@ static csiebox_server *global_server;
 static int parse_arg(csiebox_server* server, int argc, char** argv);
 static void daemonize(csiebox_server *server);
 static void writeFIFO(int signum);
-static void deleteFIFO();
+static void deleteFile();
 static void prepare_arg(csiebox_server *server, int client_id);
 static void handle_request(void *inarg, void *outarg);
 static int get_account_info(
@@ -117,7 +117,7 @@ int csiebox_server_run(csiebox_server* server) {
     //catch signal
     struct sigaction intaction;
     struct sigaction usraction;
-    intaction.sa_handler = &deleteFIFO;
+    intaction.sa_handler = &deleteFile;
     sigaction(SIGINT, &intaction, NULL);
     sigaction(SIGTERM, &intaction, NULL);
     //create fifo
@@ -154,8 +154,12 @@ int csiebox_server_run(csiebox_server* server) {
 		
 		switch (select(maxfd+1, &readset, NULL, NULL, &tv)) {
 			case -1:
-				fprintf(stderr, "select error\n");
-				return 1;
+                if (errno == EINTR) {
+                  fprintf(stderr, "select get interrupt\n");
+                  continue;
+                }
+                fprintf(stderr, "select error\n");
+                return 1;
 			case 0:
 				continue;
 		}
@@ -213,10 +217,10 @@ int csiebox_server_run(csiebox_server* server) {
     usraction.sa_handler = SIG_DFL;
     sigaction(SIGUSR1, &usraction, NULL);
     
-    //deleteFIFO
-    deleteFIFO();
+    //deleteFile
+    deleteFile();
 
-	return 1;
+	return 0;
 }
 
 void csiebox_server_destroy(csiebox_server** server) {
@@ -305,7 +309,6 @@ daemonize(csiebox_server *server)
   int fd0, fd1, fd2;
   FILE *pidfile;
   pid_t pid;
-  char pidfilepath[PATH_MAX];
   //clear file creation mask
   umask(0);
   //become session leader
@@ -331,11 +334,11 @@ daemonize(csiebox_server *server)
   fd2 = dup(0);
   //open syslog, write pid file, check file descriptor
   openlog("csiebox_server", LOG_CONS, LOG_DAEMON);
-  strncpy(pidfilepath, server->arg.run_path, PATH_MAX);
-  strcat(pidfilepath, PIDFILE);
-  pidfile = fopen(pidfilepath, "w");
+  strncpy(server->arg.pidfile, server->arg.run_path, PATH_MAX);
+  strcat(server->arg.pidfile, PIDFILE);
+  pidfile = fopen(server->arg.pidfile, "w");
   if (pidfile == NULL) {
-    syslog(LOG_ERR, "cannot open %s", pidfilepath);
+    syslog(LOG_ERR, "cannot open %s", server->arg.pidfile);
     exit(1);
   }
   fprintf(pidfile, "%d\n", getpid());
@@ -350,16 +353,35 @@ daemonize(csiebox_server *server)
 static void 
 writeFIFO(int signum)
 {
+  int fd;
+  uint32_t working_thread = 0;
+  working_thread = htonl(check_working(global_server->pool));
+  //fprintf(stderr, "%s\n", global_server->arg.fifofile);
+  fd = open(global_server->arg.fifofile, O_WRONLY);
+  if (fd == -1) {
+    fprintf(stderr, "open fifo file fail\n");
+    return;
+  }
+  fprintf(stderr, "working thread num = %u\n", working_thread);
+  write(fd, &working_thread, sizeof(uint32_t));
+  close(fd);
 }
 
 static void 
-deleteFIFO()
+deleteFile()
 {
   int ret;
   ret = unlink(global_server->arg.fifofile);
   if (ret == -1) {
     fprintf(stderr, "delete fifo file error\n");
   }
+  if (global_server->arg.isDaemonize) {
+    ret = unlink(global_server->arg.pidfile);
+    if (ret == -1) {
+      fprintf(stderr, "delete pid file error\n");
+    }
+  }
+  exit(0);
 }
 
 static void

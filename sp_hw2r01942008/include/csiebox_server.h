@@ -33,6 +33,7 @@ typedef struct {
     char account_path[PATH_MAX];
     char run_path[PATH_MAX];
     char fifofile[PATH_MAX];
+    char pidfile[PATH_MAX];
     int thread_num;
     int isDaemonize;
   } arg;
