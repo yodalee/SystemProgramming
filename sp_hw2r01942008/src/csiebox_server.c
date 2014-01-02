@@ -15,6 +15,7 @@
 #include <signal.h>
 #include <dirent.h>
 #include <time.h>
+#include <syslog.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
@@ -22,6 +23,7 @@
 static csiebox_server *global_server;
 
 static int parse_arg(csiebox_server* server, int argc, char** argv);
+static void daemonize(csiebox_server *server);
 static void writeFIFO(int signum);
 static void deleteFIFO();
 static void prepare_arg(csiebox_server *server, int client_id);
@@ -71,7 +73,7 @@ void csiebox_server_init(
   }
   memset(tmp, 0, sizeof(csiebox_server));
   if (!parse_arg(tmp, argc, argv)) {
-    fprintf(stderr, "Usage: %s [config file]\n", argv[0]);
+    fprintf(stderr, "Usage: %s [config file] [-d]\n", argv[0]);
     free(tmp);
     return;
   } 
@@ -108,6 +110,10 @@ int csiebox_server_run(csiebox_server* server) {
 	fd_set readset;
 	struct timeval tv;
 
+    if (server->arg.isDaemonize) {
+      daemonize(server);
+    }
+
     //catch signal
     struct sigaction intaction;
     struct sigaction usraction;
@@ -116,6 +122,11 @@ int csiebox_server_run(csiebox_server* server) {
     sigaction(SIGTERM, &intaction, NULL);
     //create fifo
     int ret;
+    char filename[PATH_MAX];
+    pid_t pid = getpid();
+    fprintf(stderr, "server pid = %u\n", pid);
+    sprintf(filename, "/csiebox_server.%u", pid);
+    strcat(server->arg.fifofile, filename);
     ret = mkfifo(global_server->arg.fifofile, 0777);
     if (ret == -1) {
       fprintf(stderr, "make fifo file error\n");
@@ -227,12 +238,15 @@ void csiebox_server_destroy(csiebox_server** server) {
 
 //read config file
 static int parse_arg(csiebox_server* server, int argc, char** argv) {
-  if (argc != 2) {
+  if (argc < 2 || argc > 3) {
     return 0;
   }
   FILE* file = fopen(argv[1], "r");
   if (!file) {
     return 0;
+  }
+  if (argc == 3) {
+    server->arg.isDaemonize = (strcmp(argv[2], "-d") == 0);
   }
   fprintf(stderr, "reading config...\n");
   size_t keysize = 20, valsize = 20;
@@ -261,17 +275,14 @@ static int parse_arg(csiebox_server* server, int argc, char** argv) {
       if (server->arg.thread_num <= 0) {
         accept_config[2] = 0;
       } else {
+        accept_config[2] = 1;
+      }
     } else if (strcmp("run_path", key) == 0) {
-      server->arg.has_run_path = 1;
       accept_config[3] = 1;
-      char run_path[PATH_MAX];
-      pid_t pid = getpid();
-      fprintf(stderr, "server pid = %u\n", pid);
       if (vallen <= sizeof(server->arg.fifofile)) {
+        strncpy(server->arg.run_path, val, vallen);
         strncpy(server->arg.fifofile, val, vallen);
       }
-      sprintf(run_path, "/csiebox_server.%u", pid);
-      strcat(server->arg.fifofile, run_path);
     }
   }
   free(key);
@@ -286,6 +297,54 @@ static int parse_arg(csiebox_server* server, int argc, char** argv) {
     return 0;
   }
   return 1;
+}
+
+static void 
+daemonize(csiebox_server *server) 
+{
+  int fd0, fd1, fd2;
+  FILE *pidfile;
+  pid_t pid;
+  char pidfilepath[PATH_MAX];
+  //clear file creation mask
+  umask(0);
+  //become session leader
+  if ((pid = fork()) < 0) {
+    fprintf(stderr, "cannot fork into new process\n");
+    exit(1);
+  } else if (pid != 0) { //parent
+    exit(0);
+  }
+  setsid();
+  //change directory
+  if (chdir("/") < 0) {
+    fprintf(stderr, "cannot change to root directory\n");
+    exit(1);
+  }
+  //close unused file descriptor
+  fclose(stdin);
+  fclose(stdout);
+  fclose(stderr);
+  //reopen file descriptor to /dev/null
+  fd0 = open("/dev/null", O_RDWR);
+  fd1 = dup(0);
+  fd2 = dup(0);
+  //open syslog, write pid file, check file descriptor
+  openlog("csiebox_server", LOG_CONS, LOG_DAEMON);
+  strncpy(pidfilepath, server->arg.run_path, PATH_MAX);
+  strcat(pidfilepath, PIDFILE);
+  pidfile = fopen(pidfilepath, "w");
+  if (pidfile == NULL) {
+    syslog(LOG_ERR, "cannot open %s", pidfilepath);
+    exit(1);
+  }
+  fprintf(pidfile, "%d\n", getpid());
+  fclose(pidfile);
+
+  if (fd0 != 0 || fd1 != 1 || fd2 != 2) {
+    syslog(LOG_ERR, "unexpected file descriptors %d %d %d", fd0, fd1, fd2);
+    exit(1);
+  }
 }
 
 static void 

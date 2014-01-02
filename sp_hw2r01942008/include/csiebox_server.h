@@ -10,7 +10,7 @@ extern "C" {
 #include <limits.h>
 #include "thread.h"
 
-#define pidFile "csiebox_server.pid"
+#define PIDFILE "/csiebox_server.pid"
 enum Status {NOCLIENT, LINK, PROCESS};
 
 typedef struct {
@@ -31,9 +31,9 @@ typedef struct {
   struct {
     char path[PATH_MAX];
     char account_path[PATH_MAX];
+    char run_path[PATH_MAX];
     char fifofile[PATH_MAX];
     int thread_num;
-    int has_run_path;
     int isDaemonize;
   } arg;
   int listen_fd;
